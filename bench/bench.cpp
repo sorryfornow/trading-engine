@@ -1,16 +1,14 @@
 #include "OrderBook.h"
+#include "PriceLevelBook.h"
 #include "Timer.h"
 #include <iostream>
-#include <vector>
 #include <random>
 
-// ─── 生成测试订单 / Generate test orders ─────────────────────────────────────
-// 模拟真实场景：随机价格在一定范围内波动
-// Simulates realistic scenario: prices fluctuate within a range
+using BenchBook = PriceLevelBook<990, 1010, 5, 1>;
+
+// ─── Generate test orders ─────────────────────────────────────
 std::vector<Order> make_orders(size_t n) {
-    std::mt19937 rng(42);  // fixed seed，结果可复现 / reproducible
-    // 价格在 99.0 ~ 101.0 之间，步长 0.5
-    // Prices between 99.0 and 101.0, step 0.5
+    std::mt19937 rng(42);
     std::uniform_int_distribution<int> price_dist(0, 4);
     std::uniform_int_distribution<int> qty_dist(1, 100);
     std::uniform_int_distribution<int> side_dist(0, 1);
@@ -30,7 +28,18 @@ std::vector<Order> make_orders(size_t n) {
     return orders;
 }
 
-// ─── Benchmark: add() 延迟 / Benchmark: add() latency ────────────────────────
+// Helper to pre-populate a book — shared by both versions
+template<typename BookT>
+void prepopulate(BookT& book) {
+    for (size_t i = 0; i < 20; ++i) {
+        // i % 3 → 0, 1, 2 → 价格 99.0, 99.5, 100.0
+        book.add(Order{1000 + i, Side::Buy,  99.0  + (i % 3) * 0.5, 100});
+        // i % 2 → 0, 1   → 价格 100.5, 101.0，
+        book.add(Order{2000 + i, Side::Sell, 100.5 + (i % 2) * 0.5, 100});
+    }
+}
+
+// ─── Benchmark: add() latency ────────────────────────
 Timer::Stats bench_add(size_t n_samples) {
     auto orders = make_orders(n_samples);
     std::vector<uint64_t> latencies;
@@ -38,44 +47,32 @@ Timer::Stats bench_add(size_t n_samples) {
 
     for (size_t i = 0; i < n_samples; ++i) {
         OrderBook book;
-
         uint64_t t0 = Timer::now();
         book.add(orders[i]);
         uint64_t t1 = Timer::now();
-
         latencies.push_back(Timer::to_ns(t1 - t0));
     }
     return Timer::compute(latencies);
 }
 
-// ─── Benchmark: add() + match() 端到端延迟 ───────────────────────────────────
-// Benchmark: end-to-end latency of add() + match()
+// Templated benchmark — works for both OrderBook and PriceLevelBook
+template<typename BookT>
 Timer::Stats bench_add_match(size_t n_samples) {
     auto orders = make_orders(n_samples);
     std::vector<uint64_t> latencies;
     latencies.reserve(n_samples);
 
-    // 预先建好一个有深度的 book，模拟真实环境
-    // Pre-populate book to simulate a realistic environment
-    OrderBook book;
-    for (size_t i = 0; i < 20; ++i) {
-        book.add(Order{1000 + i, Side::Buy,  99.0 + (i % 3) * 0.5, 100});
-        book.add(Order{2000 + i, Side::Sell, 100.5 + (i % 3) * 0.5, 100});
-    }
+    BookT book;
+    prepopulate(book);
 
-    // 重定向 cout 避免 TRADE 打印拖慢 benchmark
-    // Redirect cout to suppress TRADE prints during timing
     std::streambuf* orig = std::cout.rdbuf(nullptr);
-
     for (size_t i = 0; i < n_samples; ++i) {
         uint64_t t0 = Timer::now();
         book.add(orders[i]);
         book.match();
         uint64_t t1 = Timer::now();
-
         latencies.push_back(Timer::to_ns(t1 - t0));
     }
-
     std::cout.rdbuf(orig);
     return Timer::compute(latencies);
 }
@@ -89,23 +86,49 @@ int main() {
     std::cout << "  Samples  : " << N << "\n";
     std::cout << "================================================\n";
 
-    // Warmup — 让 CPU 进入稳定状态 / warm up CPU
+    // Warmup
     {
         auto warmup = make_orders(1000);
-        OrderBook book;
-        for (auto& o : warmup) { book.add(o); book.match(); }
+        OrderBook  b1; prepopulate(b1);
+        BenchBook  b2; prepopulate(b2);
+        std::streambuf* orig = std::cout.rdbuf(nullptr);
+        for (auto& o : warmup) {
+            b1.add(o); b1.match();
+            b2.add(o); b2.match();
+        }
+        std::cout.rdbuf(orig);
     }
 
-    auto stats_add = bench_add(N);
-    Timer::print("add() latency", stats_add);
+    // ── std::map 版本 / std::map version ─────────────────────────────────────
+    auto slow_add   = bench_add(N);
+    Timer::print("OrderBook add() [std::map]", slow_add);
 
-    auto stats_match = bench_add_match(N);
-    Timer::print("add() + match() latency", stats_match);
+    auto slow_match = bench_add_match<OrderBook>(N);
+    Timer::print("OrderBook add()+match() [std::map]", slow_match);
 
-    std::cout << "\n------------------------------------------------\n";
-    std::cout << "  目标 / Target (Phase 2 完成后 / after Phase 2):\n";
-    std::cout << "  p99 < 500 ns\n";
-    std::cout << "------------------------------------------------\n";
+    // ── 数组版本 / Array version ──────────────────────────────────────────────
+    auto fast_match = bench_add_match<BenchBook>(N);
+    Timer::print("PriceLevelBook add()+match() [array]", fast_match);
+
+    // ── 对比 / Comparison ─────────────────────────────────────────────────────
+    std::cout << "\n================================================\n";
+    std::cout << "  Summary\n";
+    std::cout << "================================================\n";
+    std::cout << "                   p50        p99       p99.9\n";
+    std::cout << "  std::map    : "
+              << std::setw(7) << slow_match.p50  << "ns  "
+              << std::setw(7) << slow_match.p99  << "ns  "
+              << std::setw(7) << slow_match.p999 << "ns\n";
+    std::cout << "  array       : "
+              << std::setw(7) << fast_match.p50  << "ns  "
+              << std::setw(7) << fast_match.p99  << "ns  "
+              << std::setw(7) << fast_match.p999 << "ns\n";
+    std::cout << "  p99 gain    : "
+              << slow_match.p99 / std::max(fast_match.p99, (uint64_t)1)
+              << "x faster\n";
+    std::cout << "  target p99  : < 500 ns  "
+              << (fast_match.p99 < 500 ? "✓ PASSED" : "✗ NOT YET") << "\n";
+    std::cout << "================================================\n";
 
     return 0;
 }
