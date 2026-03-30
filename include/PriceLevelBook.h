@@ -5,6 +5,7 @@
 #include <iostream>
 #include <iomanip>
 #include <cassert>
+#include <cmath>
 
 //  Prices represented as integer ticks to avoid floating point precision issues.
 //  e.g. If MIN_PRICE=10, MAX_PRICE=100, TICK=1, PRECISION=2, then:
@@ -18,7 +19,7 @@ template<int MIN_PRICE, int MAX_PRICE, int TICK, int PRECISION, int POOL_SIZE = 
 class PriceLevelBook {
 public:
     static int to_tick(double price) {
-        return lround(price * MULTIPLIER / TICK) * TICK;
+        return std::lround(price * MULTIPLIER / TICK) * TICK;
     }
 
     static int to_index(int tick) {
