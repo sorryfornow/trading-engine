@@ -29,5 +29,6 @@ add_executable(trading-engine src/main.cpp
 add_executable(bench bench/bench.cpp
         bench/bench.cpp
         include/Timer.h
-        include/PriceLevelBook.h)
+        include/PriceLevelBook.h
+        include/ObjectPool.h)
 target_compile_options(bench PRIVATE -O3)

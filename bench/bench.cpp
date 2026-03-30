@@ -4,7 +4,8 @@
 #include <iostream>
 #include <random>
 
-using BenchBook = PriceLevelBook<990, 1010, 5, 1>;
+// 5th param = pool size, must hold all orders across warmup + benchmark
+using BenchBook = PriceLevelBook<990, 1010, 5, 1, 200000>;
 
 // ─── Generate test orders ─────────────────────────────────────
 std::vector<Order> make_orders(size_t n) {
