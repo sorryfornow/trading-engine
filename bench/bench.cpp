@@ -56,14 +56,34 @@ Timer::Stats bench_add(size_t n_samples) {
     return Timer::compute(latencies);
 }
 
-// Templated benchmark — works for both OrderBook and PriceLevelBook
-template<typename BookT>
-Timer::Stats bench_add_match(size_t n_samples) {
+// OrderBook benchmark — needs rdbuf(nullptr) to suppress std::cout in match()
+Timer::Stats bench_add_match_orderbook(size_t n_samples) {
     auto orders = make_orders(n_samples);
     std::vector<uint64_t> latencies;
     latencies.reserve(n_samples);
 
-    BookT book;
+    OrderBook book;
+    prepopulate(book);
+
+    std::streambuf* orig = std::cout.rdbuf(nullptr);
+    for (size_t i = 0; i < n_samples; ++i) {
+        uint64_t t0 = Timer::now();
+        book.add(orders[i]);
+        book.match();
+        uint64_t t1 = Timer::now();
+        latencies.push_back(Timer::to_ns(t1 - t0));
+    }
+    std::cout.rdbuf(orig);
+    return Timer::compute(latencies);
+}
+
+// PriceLevelBook benchmark — match() with nullptr callback, zero overhead
+Timer::Stats bench_add_match_plb(size_t n_samples) {
+    auto orders = make_orders(n_samples);
+    std::vector<uint64_t> latencies;
+    latencies.reserve(n_samples);
+
+    BenchBook book;
     prepopulate(book);
 
     for (size_t i = 0; i < n_samples; ++i) {
@@ -104,11 +124,11 @@ int main() {
     auto slow_add   = bench_add(N);
     Timer::print("OrderBook add() [std::map]", slow_add);
 
-    auto slow_match = bench_add_match<OrderBook>(N);
+    auto slow_match = bench_add_match_orderbook(N);
     Timer::print("OrderBook add()+match() [std::map]", slow_match);
 
     // ── 数组版本 / Array version ──────────────────────────────────────────────
-    auto fast_match = bench_add_match<BenchBook>(N);
+    auto fast_match = bench_add_match_plb(N);
     Timer::print("PriceLevelBook add()+match() [array]", fast_match);
 
     // ── 对比 / Comparison ─────────────────────────────────────────────────────
