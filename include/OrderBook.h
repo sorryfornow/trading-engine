@@ -12,7 +12,7 @@ public:
     // asks: price ascending
     std::map<double, std::vector<Order>> asks;
 
-    void add(Order o) {
+    void add(const Order& o) {
         if (o.side == Side::Buy) {
             bids[o.price].push_back(o);
         } else {
