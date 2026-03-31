@@ -1,0 +1,8 @@
+//
+// Created by Siqing Zhang on 31/3/2026.
+//
+
+#ifndef TRADING_ENGINE_SPSCQUEUE_H
+#define TRADING_ENGINE_SPSCQUEUE_H
+
+#endif //TRADING_ENGINE_SPSCQUEUE_H
