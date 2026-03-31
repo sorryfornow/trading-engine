@@ -2,11 +2,45 @@
 #include "Order.h"
 #include "ObjectPool.h"
 #include <array>
+#include <unordered_map>
 #include <iostream>
 #include <iomanip>
 #include <cassert>
 #include <cmath>
 
+// ─── Intrusive doubly-linked list ────────────────────────────────────────────
+// All nodes live in ObjectPool — no heap allocation per push/remove.
+struct OrderList {
+    Order* head = nullptr;
+    Order* tail = nullptr;
+    int    count = 0;
+
+    bool empty() const { return count == 0; }
+
+    void push_back(Order* o) {
+        o->prev = tail;
+        o->next = nullptr;
+        if (tail) tail->next = o;
+        else      head = o;
+        tail = o;
+        count++;
+    }
+
+    // Remove any node in O(1)
+    void remove(Order* o) {
+        if (o->prev) o->prev->next = o->next;
+        else         head = o->next;
+        if (o->next) o->next->prev = o->prev;
+        else         tail = o->prev;
+        o->prev = o->next = nullptr;
+        count--;
+    }
+
+    Order* front() const { return head; }
+};
+
+// ─── PriceLevelBook ──────────────────────────────────────────────────────────
+//
 //  Prices represented as integer ticks to avoid floating point precision issues.
 //  e.g. If MIN_PRICE=10, MAX_PRICE=100, TICK=1, PRECISION=2, then:
 //  MIN_PRICE=1000 → 10.00
@@ -18,6 +52,11 @@
 template<int MIN_PRICE, int MAX_PRICE, int TICK, int PRECISION, int POOL_SIZE = 10000>
 class PriceLevelBook {
 public:
+    PriceLevelBook() {
+        // Pre-allocate hash map to avoid rehash in hot path
+        id_map.reserve(POOL_SIZE);
+    }
+
     static int to_tick(double price) {
         return std::lround(price * MULTIPLIER / TICK) * TICK;
     }
@@ -36,6 +75,10 @@ public:
 
         Order* p = pool.allocate();
         *p = o;
+        p->prev = p->next = nullptr;
+
+        // O(1) cancel lookup
+        id_map[o.id] = p;
 
         if (o.side == Side::Buy) {
             bids[index].push_back(p);
@@ -49,35 +92,33 @@ public:
     }
 
     void cancel(uint64_t order_id) {
-        auto try_cancel = [&](std::array<std::vector<Order*>, LEVELS>& side,
-                              int& best_idx,
-                              bool is_bid) -> bool {
-            for (int i = 0; i < LEVELS; ++i) {
-                auto& orders = side[i];
-                for (auto it = orders.begin(); it != orders.end(); ++it) {
-                    if ((*it)->id == order_id) {
-                        pool.release(*it);
-                        orders.erase(it);
-                        if (orders.empty() && i == best_idx) {
-                            int dir = is_bid ? -1 : 1;
-                            while (best_idx >= 0 && best_idx < LEVELS
-                                   && side[best_idx].empty())
-                                best_idx += dir;
-                            if (best_idx < 0 || best_idx >= LEVELS)
-                                best_idx = -1;
-                        }
-                        return true;
-                    }
-                }
-            }
-            return false;
-        };
+        auto it = id_map.find(order_id);
+        if (it == id_map.end()) return;
 
-        if (!try_cancel(bids, best_bid_idx, true))
-            try_cancel(asks, best_ask_idx, false);
+        Order* o = it->second;
+        int index = to_index(to_tick(o->price));
+        bool is_bid = (o->side == Side::Buy);
+
+        auto& side = is_bid ? bids : asks;
+        int& best_idx = is_bid ? best_bid_idx : best_ask_idx;
+
+        side[index].remove(o);
+        id_map.erase(it);
+        pool.release(o);
+
+        // Rescan best level if this level is now empty
+        if (side[index].empty() && index == best_idx) {
+            int dir = is_bid ? -1 : 1;
+            while (best_idx >= 0 && best_idx < LEVELS && side[best_idx].empty())
+                best_idx += dir;
+            if (best_idx < 0 || best_idx >= LEVELS)
+                best_idx = -1;
+        }
     }
 
-    void match() {
+    using TradeCallback = void(*)(int qty, double price);
+
+    void match(TradeCallback on_trade = nullptr) {
         while (best_bid_idx != -1 && best_ask_idx != -1) {
             if (best_bid_idx < best_ask_idx) break;
 
@@ -88,20 +129,22 @@ public:
             Order* ask = ask_orders.front();
 
             int traded_qty = std::min(bid->qty, ask->qty);
-            std::cout << "TRADE: " << traded_qty
-                      << std::fixed << std::setprecision(PRECISION)
-                      << " @ " << to_price(best_ask_idx) << "\n";
+
+            if (on_trade)
+                on_trade(traded_qty, to_price(best_ask_idx));
 
             bid->qty -= traded_qty;
             ask->qty -= traded_qty;
 
             if (bid->qty == 0) {
+                bid_orders.remove(bid);
+                id_map.erase(bid->id);
                 pool.release(bid);
-                bid_orders.erase(bid_orders.begin());
             }
             if (ask->qty == 0) {
+                ask_orders.remove(ask);
+                id_map.erase(ask->id);
                 pool.release(ask);
-                ask_orders.erase(ask_orders.begin());
             }
 
             if (bid_orders.empty()) {
@@ -119,12 +162,13 @@ public:
     }
 
     void print_book() {
-        std::cout<< "=== Order Book ===\n" << "ASKS:\n";
+        std::cout << "=== Order Book ===\n" << "ASKS:\n";
         for (int i = 0; i < LEVELS; ++i) {
             if (!asks[i].empty()) {
                 double price = to_price(i);
                 int total_qty = 0;
-                for (const auto* o : asks[i]) total_qty += o->qty;
+                for (Order* o = asks[i].head; o; o = o->next)
+                    total_qty += o->qty;
                 std::cout << std::fixed << std::setprecision(PRECISION)
                           << price << " : " << total_qty << "\n";
             }
@@ -134,12 +178,13 @@ public:
             if (!bids[i].empty()) {
                 double price = to_price(i);
                 int total_qty = 0;
-                for (const auto* o : bids[i]) total_qty += o->qty;
+                for (Order* o = bids[i].head; o; o = o->next)
+                    total_qty += o->qty;
                 std::cout << std::fixed << std::setprecision(PRECISION)
                           << price << " : " << total_qty << "\n";
             }
         }
-        std::cout<< "==================\n";
+        std::cout << "==================\n";
     }
 
 private:
@@ -162,8 +207,9 @@ private:
                   "Price range must be evenly divisible by TICK");
 
     ObjectPool<Order, POOL_SIZE> pool;
-    std::array<std::vector<Order*>, LEVELS> bids;
-    std::array<std::vector<Order*>, LEVELS> asks;
+    std::array<OrderList, LEVELS> bids;
+    std::array<OrderList, LEVELS> asks;
+    std::unordered_map<uint64_t, Order*> id_map;
     int best_bid_idx = -1;
     int best_ask_idx = -1;
 };

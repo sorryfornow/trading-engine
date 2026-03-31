@@ -5,7 +5,7 @@
 #include <random>
 
 // 5th param = pool size, must hold all orders across warmup + benchmark
-using BenchBook = PriceLevelBook<990, 1010, 5, 1, 200000>;
+using BenchBook = PriceLevelBook<990, 1010, 5, 1, 200'000>;
 
 // ─── Generate test orders ─────────────────────────────────────
 std::vector<Order> make_orders(size_t n) {
@@ -66,7 +66,6 @@ Timer::Stats bench_add_match(size_t n_samples) {
     BookT book;
     prepopulate(book);
 
-    std::streambuf* orig = std::cout.rdbuf(nullptr);
     for (size_t i = 0; i < n_samples; ++i) {
         uint64_t t0 = Timer::now();
         book.add(orders[i]);
@@ -74,7 +73,6 @@ Timer::Stats bench_add_match(size_t n_samples) {
         uint64_t t1 = Timer::now();
         latencies.push_back(Timer::to_ns(t1 - t0));
     }
-    std::cout.rdbuf(orig);
     return Timer::compute(latencies);
 }
 
@@ -95,9 +93,11 @@ int main() {
         std::streambuf* orig = std::cout.rdbuf(nullptr);
         for (auto& o : warmup) {
             b1.add(o); b1.match();
-            b2.add(o); b2.match();
         }
         std::cout.rdbuf(orig);
+        for (auto& o : warmup) {
+            b2.add(o); b2.match();
+        }
     }
 
     // ── std::map 版本 / std::map version ─────────────────────────────────────
