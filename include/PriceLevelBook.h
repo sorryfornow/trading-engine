@@ -70,7 +70,7 @@ public:
     }
 
     void add(const Order& o) {
-        int index = to_index(to_tick(o.price));
+        int index = to_index(o.tick);
         assert(index >= 0 && index < LEVELS);
 
         Order* p = pool.allocate();
@@ -91,12 +91,12 @@ public:
         }
     }
 
-    void cancel(uint64_t order_id) {
+    void cancel(uint32_t order_id) {
         auto it = id_map.find(order_id);
         if (it == id_map.end()) return;
 
         Order* o = it->second;
-        int index = to_index(to_tick(o->price));
+        int index = to_index(o->tick);
         bool is_bid = (o->side == Side::Buy);
 
         auto& side = is_bid ? bids : asks;
@@ -209,7 +209,7 @@ private:
     ObjectPool<Order, POOL_SIZE> pool;
     std::array<OrderList, LEVELS> bids;
     std::array<OrderList, LEVELS> asks;
-    std::unordered_map<uint64_t, Order*> id_map;
+    std::unordered_map<uint32_t, Order*> id_map;
     int best_bid_idx = -1;
     int best_ask_idx = -1;
 };

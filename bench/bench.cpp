@@ -10,19 +10,20 @@ using BenchBook = PriceLevelBook<990, 1010, 5, 1, 200'000>;
 // ─── Generate test orders ─────────────────────────────────────
 std::vector<Order> make_orders(size_t n) {
     std::mt19937 rng(42);
-    std::uniform_int_distribution<int> price_dist(0, 4);
+    std::uniform_int_distribution<int> tick_dist(0, 4);
     std::uniform_int_distribution<int> qty_dist(1, 100);
     std::uniform_int_distribution<int> side_dist(0, 1);
 
-    static const double prices[] = {99.0, 99.5, 100.0, 100.5, 101.0};
+    // tick values matching BenchBook<990, 1010, 5, 1>
+    static const int ticks[] = {990, 995, 1000, 1005, 1010};
 
     std::vector<Order> orders;
     orders.reserve(n);
-    for (size_t i = 0; i < n; ++i) {
+    for (uint32_t i = 0; i < n; ++i) {
         orders.push_back(Order{
                 i + 1,
                 side_dist(rng) ? Side::Buy : Side::Sell,
-                prices[price_dist(rng)],
+                ticks[tick_dist(rng)],
                 qty_dist(rng)
         });
     }
@@ -32,11 +33,11 @@ std::vector<Order> make_orders(size_t n) {
 // Helper to pre-populate a book — shared by both versions
 template<typename BookT>
 void prepopulate(BookT& book) {
-    for (size_t i = 0; i < 20; ++i) {
-        // i % 3 → 0, 1, 2 → 价格 99.0, 99.5, 100.0
-        book.add(Order{1000 + i, Side::Buy,  99.0  + (i % 3) * 0.5, 100});
-        // i % 2 → 0, 1   → 价格 100.5, 101.0，
-        book.add(Order{2000 + i, Side::Sell, 100.5 + (i % 2) * 0.5, 100});
+    for (uint32_t i = 0; i < 20; ++i) {
+        // i % 3 → 0, 1, 2 → ticks 990, 995, 1000
+        book.add(Order{1000 + i, Side::Buy,  990 + static_cast<int>(i % 3) * 5, 100});
+        // i % 2 → 0, 1 → ticks 1005, 1010
+        book.add(Order{2000 + i, Side::Sell, 1005 + static_cast<int>(i % 2) * 5, 100});
     }
 }
 
@@ -120,18 +121,18 @@ int main() {
         }
     }
 
-    // ── std::map 版本 / std::map version ─────────────────────────────────────
+    // ── std::map version ─────────────────────────────────────────
     auto slow_add   = bench_add(N);
     Timer::print("OrderBook add() [std::map]", slow_add);
 
     auto slow_match = bench_add_match_orderbook(N);
     Timer::print("OrderBook add()+match() [std::map]", slow_match);
 
-    // ── 数组版本 / Array version ──────────────────────────────────────────────
+    // ── Array version ────────────────────────────────────────────
     auto fast_match = bench_add_match_plb(N);
     Timer::print("PriceLevelBook add()+match() [array]", fast_match);
 
-    // ── 对比 / Comparison ─────────────────────────────────────────────────────
+    // ── Comparison ───────────────────────────────────────────────
     std::cout << "\n================================================\n";
     std::cout << "  Summary\n";
     std::cout << "================================================\n";

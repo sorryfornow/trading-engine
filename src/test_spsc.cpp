@@ -71,8 +71,8 @@ int main() {
     section("Test 5: Order Type");
     {
         SPSCQueue<Order, 8> q;
-        assert(q.push(Order{1, Side::Buy, 100.5, 200}));
-        assert(q.push(Order{2, Side::Sell, 99.0, 50}));
+        assert(q.push(Order{1, Side::Buy, 1005, 200}));
+        assert(q.push(Order{2, Side::Sell, 990, 50}));
         Order o;
         assert(q.pop(o) && o.id == 1 && o.side == Side::Buy && o.qty == 200);
         assert(q.pop(o) && o.id == 2 && o.side == Side::Sell && o.qty == 50);

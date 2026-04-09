@@ -7,34 +7,34 @@
 
 class OrderBook {
 public:
-    // bids: price descending
-    std::map<double, std::vector<Order>, std::greater<double>> bids;
-    // asks: price ascending
-    std::map<double, std::vector<Order>> asks;
+    // bids: tick descending (highest tick = best bid)
+    std::map<int, std::vector<Order>, std::greater<int>> bids;
+    // asks: tick ascending (lowest tick = best ask)
+    std::map<int, std::vector<Order>> asks;
 
     void add(const Order& o) {
         if (o.side == Side::Buy) {
-            bids[o.price].push_back(o);
+            bids[o.tick].push_back(o);
         } else {
-            asks[o.price].push_back(o);
+            asks[o.tick].push_back(o);
         }
     }
 
-    void cancel(uint64_t order_id) {
-        for (auto& [price, orders] : bids) {
+    void cancel(uint32_t order_id) {
+        for (auto& [tick, orders] : bids) {
             for (auto it = orders.begin(); it != orders.end(); ++it) {
                 if (it->id == order_id) {
                     orders.erase(it);
-                    if (orders.empty()) bids.erase(price);
+                    if (orders.empty()) bids.erase(tick);
                     return;
                 }
             }
         }
-        for (auto& [price, orders] : asks) {
+        for (auto& [tick, orders] : asks) {
             for (auto it = orders.begin(); it != orders.end(); ++it) {
                 if (it->id == order_id) {
                     orders.erase(it);
-                    if (orders.empty()) asks.erase(price);
+                    if (orders.empty()) asks.erase(tick);
                     return;
                 }
             }
@@ -43,17 +43,17 @@ public:
 
     void match() {
         while (!bids.empty() && !asks.empty()) {
-            auto& [bid_price, bid_orders] = *bids.begin();
-            auto& [ask_price, ask_orders] = *asks.begin();
+            auto& [bid_tick, bid_orders] = *bids.begin();
+            auto& [ask_tick, ask_orders] = *asks.begin();
 
-            if (bid_price < ask_price) break;
+            if (bid_tick < ask_tick) break;
 
             auto& bid = bid_orders.front();
             auto& ask = ask_orders.front();
 
             int traded_qty = std::min(bid.qty, ask.qty);
             std::cout << "TRADE: " << traded_qty
-                      << " @ " << ask_price << "\n";
+                      << " @ tick " << ask_tick << "\n";
 
             bid.qty -= traded_qty;
             ask.qty -= traded_qty;
@@ -68,22 +68,16 @@ public:
 
     void print_book(){
         std::cout<< "=== Order Book ===\n" << "ASKS:\n";
-        for (auto& [ask_price,ask_order]: asks) {
+        for (auto& [tick, orders]: asks) {
             int total_qty = 0;
-            for (const auto& o : ask_order) total_qty += o.qty;
-            // set precision to 1 decimal places
-            std::cout << std::fixed << std::setprecision(1)
-                      << ask_price;
-            std::cout << " x " << total_qty << "\n";
+            for (const auto& o : orders) total_qty += o.qty;
+            std::cout << tick << " x " << total_qty << "\n";
         }
         std::cout << "BIDS:\n";
-        for (auto& [bid_price,bid_order]: bids) {
+        for (auto& [tick, orders]: bids) {
             int total_qty = 0;
-            for (const auto& o : bid_order) total_qty += o.qty;
-            // set precision to 1 decimal places
-            std::cout << std::fixed << std::setprecision(1)
-                        << bid_price;
-            std::cout << " x " << total_qty << "\n";
+            for (const auto& o : orders) total_qty += o.qty;
+            std::cout << tick << " x " << total_qty << "\n";
         }
         std::cout<< "==================\n";
     }
