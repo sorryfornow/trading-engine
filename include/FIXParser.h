@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include "Order.h"
 
+// Financial Information eXchange (FIX) message parser.
 struct FIXMessage {
     enum Type : uint8_t { NewOrder, Cancel, Unknown };
 
@@ -15,7 +16,8 @@ struct FIXMessage {
 
 class FIXParser {
 public:
-    // Parse FIX message: "8=FIX.4.2|35=D|11=1001|54=1|44=100.5|38=200|" real FIX uses \x01（SOH）
+    // Parse FIX message: "8=FIX.4.2|35=D|11=1001|54=1|44=100.5|38=200|"
+    // FIX uses <SOH>: Separator (ASCII 0x01) instead of '|', but we use '|' for readability in tests.
     // No std::string, no malloc — pure pointer scanning.
     static FIXMessage parse(const char* msg, size_t len) {
         FIXMessage m{};
