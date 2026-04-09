@@ -6,7 +6,7 @@ struct FIXMessage {
     enum Type : uint8_t { NewOrder, Cancel, Unknown };
 
     uint32_t id;       // 0
-    int      tick;     // 8  (integer tick, no floating point)
+    int      tick;     // 8
     int      qty;      // 12
     Type     type;     // 16
     Side     side;     // 17

@@ -1,4 +1,5 @@
 #include "SPSCQueue.h"
+#include "Order.h"
 #include <cassert>
 #include <iostream>
 #include <thread>

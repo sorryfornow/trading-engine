@@ -1,8 +1,6 @@
 #pragma once
 #include <cstdint>
-#include <cstddef>
-
-inline constexpr std::size_t CACHE_LINE_SIZE = 64;
+#include "Common.h"
 
 enum class Side : uint8_t { Buy, Sell };
 
