@@ -24,10 +24,12 @@ include_directories(include)
 # Tests
 add_executable(trading-engine src/main.cpp
         include/PriceLevelBook.h
-        include/SPSCQueue.h)
+        include/SPSCQueue.h
+        include/FIXParser.h)
 
 # SPSC Queue Tests
-add_executable(test_spsc src/test_spsc.cpp)
+add_executable(test_spsc src/test_spsc.cpp
+        include/FIXParser.h)
 target_link_libraries(test_spsc PRIVATE pthread)
 
 # Benchmark
@@ -36,5 +38,6 @@ add_executable(bench bench/bench.cpp
         include/Timer.h
         include/PriceLevelBook.h
         include/ObjectPool.h
-        include/SPSCQueue.h)
+        include/SPSCQueue.h
+        include/FIXParser.h)
 target_compile_options(bench PRIVATE -O3)
