@@ -2,26 +2,32 @@
 #include <cstdint>
 #include <cstdlib>
 #include "Order.h"
+#include "SymbolRegistry.h"
 
 // Financial Information eXchange (FIX) message parser.
 struct FIXMessage {
     enum Type : uint8_t { NewOrder, Cancel, Unknown };
 
-    uint32_t id;       // 0
-    int      tick;     // 4
-    int      qty;      // 8
-    Type     type;     // 12
-    Side     side;     // 13
+    uint32_t id;           // 0
+    int      tick;         // 4
+    int      qty;          // 8
+    Type     type;         // 12
+    Side     side;         // 13
+    uint16_t symbol_id;    // 14  — index into SymbolRegistry
+    // total 16 bytes
 };
 
 class FIXParser {
 public:
-    // Parse FIX message: "8=FIX.4.2|35=D|11=1001|54=1|44=100.5|38=200|"
+    // Parse FIX message: "8=FIX.4.2|35=D|11=1001|55=AAPL|54=1|44=1005|38=200|"
     // FIX uses <SOH>: Separator (ASCII 0x01) instead of '|', but we use '|' for readability in tests.
     // No std::string, no malloc — pure pointer scanning.
-    static FIXMessage parse(const char* msg, size_t len) {
+    // registry is optional: pass nullptr to skip symbol resolution (backward compatible).
+    static FIXMessage parse(const char* msg, size_t len,
+                            const SymbolRegistry* registry = nullptr) {
         FIXMessage m{};
         m.type = FIXMessage::Unknown;
+        m.symbol_id = SymbolRegistry::INVALID_ID;
 
         const char* end = msg + len;
         const char* ptr = msg;
@@ -63,6 +69,11 @@ public:
                     break;
                 case 38:  // OrderQty
                     m.qty = fast_atoi(val, ptr);
+                    break;
+                case 55:  // Symbol (e.g. "AAPL")
+                    if (registry) {
+                        m.symbol_id = registry->lookup(val, static_cast<size_t>(ptr - val));
+                    }
                     break;
                 default:
                     break;  // ignore unknown tags (8=FIX.4.2, etc.)

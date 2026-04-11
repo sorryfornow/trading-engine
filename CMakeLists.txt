@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 project(trading-engine)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Platform detection
@@ -21,23 +21,23 @@ set(CMAKE_CXX_FLAGS_DEBUG   "-O0 -g -fsanitize=address")
 
 include_directories(include)
 
-# Tests
-add_executable(trading-engine src/main.cpp
-        include/PriceLevelBook.h
-        include/SPSCQueue.h
-        include/FIXParser.h)
+# Phase 1 tests
+add_executable(trading-engine src/main.cpp)
 
-# SPSC Queue Tests
-add_executable(test_spsc src/test_spsc.cpp
-        include/FIXParser.h)
+# Phase 3: SPSC queue tests
+add_executable(test_spsc src/test_spsc.cpp)
 target_link_libraries(test_spsc PRIVATE pthread)
 
+# Phase 3: FIX parser tests
+add_executable(test_fix src/test_fix.cpp)
+
+# Phase 4: Multi-symbol engine tests
+add_executable(test_multibook src/test_multibook.cpp)
+
+# Phase 3: Dual-thread engine
+add_executable(engine src/engine.cpp)
+target_link_libraries(engine PRIVATE pthread)
+
 # Benchmark
-add_executable(bench bench/bench.cpp
-        bench/bench.cpp
-        include/Timer.h
-        include/PriceLevelBook.h
-        include/ObjectPool.h
-        include/SPSCQueue.h
-        include/FIXParser.h)
+add_executable(bench bench/bench.cpp)
 target_compile_options(bench PRIVATE -O3)

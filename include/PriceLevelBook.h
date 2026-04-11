@@ -161,6 +161,14 @@ public:
         }
     }
 
+    // Best bid/ask in tick units. Returns 0 if side is empty.
+    int best_bid() const {
+        return best_bid_idx == -1 ? 0 : MIN_PRICE + best_bid_idx * TICK;
+    }
+    int best_ask() const {
+        return best_ask_idx == -1 ? 0 : MIN_PRICE + best_ask_idx * TICK;
+    }
+
     void print_book() {
         std::cout << "=== Order Book ===\n" << "ASKS:\n";
         for (int i = 0; i < LEVELS; ++i) {

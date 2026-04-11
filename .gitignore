@@ -2,13 +2,30 @@
 !.gitignore
 
 # CMake build
+
 build/
 cmake-build-debug/
 cmake-build-release/
 
 # CMake generated files
+
 CMakeCache.txt
 CMakeFiles/
 Makefile
 cmake_install.cmake
 
+# Binary / compiled files
+
+*.o
+*.so
+*.a
+
+# Executables
+
+a.out
+engine
+
+# Temp / logs
+
+*.log
+*.tmp

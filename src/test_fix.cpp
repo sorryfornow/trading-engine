@@ -85,14 +85,53 @@ int main() {
         passed++;
     }
 
+    // Test 7: Symbol resolution with SymbolRegistry
+    section("Test 7: Symbol Resolution");
+    {
+        SymbolRegistry reg;
+        reg.register_symbol("AAPL");   // id=0
+        reg.register_symbol("MSFT");   // id=1
+
+        const char* msg1 = "35=D|11=7001|55=AAPL|54=1|44=1005|38=100|";
+        auto m1 = FIXParser::parse(msg1, strlen(msg1), &reg);
+        assert(m1.type == FIXMessage::NewOrder);
+        assert(m1.symbol_id == 0);
+
+        const char* msg2 = "35=D|11=7002|55=MSFT|54=2|44=990|38=50|";
+        auto m2 = FIXParser::parse(msg2, strlen(msg2), &reg);
+        assert(m2.symbol_id == 1);
+
+        // Unknown symbol
+        const char* msg3 = "35=D|11=7003|55=TSLA|54=1|44=500|38=10|";
+        auto m3 = FIXParser::parse(msg3, strlen(msg3), &reg);
+        assert(m3.symbol_id == SymbolRegistry::INVALID_ID);
+
+        std::cout << "PASSED\n";
+        passed++;
+    }
+
+    // Test 8: Backward compatible (no registry)
+    section("Test 8: No Registry (Backward Compatible)");
+    {
+        const char* msg = "35=D|11=8001|55=AAPL|54=1|44=1005|38=100|";
+        auto m = FIXParser::parse(msg, strlen(msg));  // no registry
+        assert(m.type == FIXMessage::NewOrder);
+        assert(m.id == 8001);
+        assert(m.symbol_id == SymbolRegistry::INVALID_ID);  // not resolved
+        std::cout << "PASSED\n";
+        passed++;
+    }
+
+    constexpr int total = 8;
+
     // Summary
     std::cout << "\n======================================\n";
-    std::cout << "  FIX Results: " << passed << "/6 passed\n";
-    if (passed == 6)
+    std::cout << "  FIX Results: " << passed << "/" << total << " passed\n";
+    if (passed == total)
         std::cout << "  All FIX tests passed!\n";
     else
-        std::cout << "  " << (6 - passed) << " test(s) failed.\n";
+        std::cout << "  " << (total - passed) << " test(s) failed.\n";
     std::cout << "======================================\n";
 
-    return (passed == 6) ? 0 : 1;
+    return (passed == total) ? 0 : 1;
 }

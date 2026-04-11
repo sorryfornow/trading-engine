@@ -6,6 +6,8 @@ enum class Side : uint8_t { Buy, Sell };
 
 // Aligned to cache line boundary so each Order sits in exactly one cache line.
 // Fields ordered hot → cold for prefetcher friendliness.
+// MUST BE trivial (no constructors, destructors, virtuals) to be safely used in ObjectPool without extra overhead.
+
 struct alignas(CACHE_LINE_SIZE) Order {
     // hot: accessed every match() iteration (offset 0-19, contiguous)
     Order*   prev = nullptr;  // 0
