@@ -1,6 +1,6 @@
-#include "MultiBookEngine.h"
-#include "PriceLevelBook.h"
-#include "SymbolRegistry.h"
+#include "engine/MultiBookEngine.h"
+#include "core/PriceLevelBook.h"
+#include "protocol/SymbolRegistry.h"
 #include <cassert>
 #include <iostream>
 #include <string>

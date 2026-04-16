@@ -5,7 +5,18 @@
 #include <iostream>
 #include <iomanip>
 
-class OrderBook {
+// ─── DEPRECATED ──────────────────────────────────────────────────────────────
+// OrderBook is a Phase 1 baseline implementation using std::map + std::vector.
+// It has been superseded by:
+//
+//   - PriceLevelBook  (Phase 2) — array-indexed, ObjectPool, intrusive list,
+//                                  O(1) add/cancel, p99 < 500 ns
+//
+// Kept for: Phase 1 tests (test_main.cpp) and benchmark baseline comparison.
+// Do not use in new code.
+// ─────────────────────────────────────────────────────────────────────────────
+
+class [[deprecated("Use PriceLevelBook instead")]] OrderBook {
 public:
     // bids: tick descending (highest tick = best bid)
     std::map<int, std::vector<Order>, std::greater<int>> bids;

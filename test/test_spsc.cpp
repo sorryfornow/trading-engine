@@ -1,5 +1,5 @@
-#include "SPSCQueue.h"
-#include "Order.h"
+#include "transport/SPSCQueue.h"
+#include "core/Order.h"
 #include <cassert>
 #include <iostream>
 #include <thread>

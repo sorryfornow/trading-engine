@@ -2,7 +2,7 @@
 // Single-producer single-consumer lock-free queue.
 #include <atomic>
 #include <cassert>
-#include "Common.h"
+#include "core/Common.h"
 
 template<typename T, size_t N>
 class SPSCQueue {
