@@ -13,7 +13,7 @@
 //   x86 / AMD64 (Linux)  → __rdtsc()            reads CPU timestamp counter
 //   ARM64 / Apple M      → clock_gettime()       monotonic nanoseconds
 //
-// 用法 / Usage:
+//   用法 / Usage:
 //   uint64_t t0 = Timer::now();
 //   ... do work ...
 //   uint64_t ns = Timer::to_ns(Timer::now() - t0);
@@ -58,6 +58,7 @@ namespace Timer {
     inline const char* platform() { return "x86_64 (rdtsc)"; }
 
 #elif defined(__aarch64__) || defined(__arm64__)
+
     // ARM64 / Apple M: use system virtual count register 用 CNTVCT_EL0 寄存器
 
     // allows the function to be defined in multiple translation units without violating the One Definition Rule (ODR)
@@ -103,8 +104,12 @@ namespace Timer {
     // 从一组纳秒样本计算百分位 / Compute percentiles from nanosecond samples
     inline Stats compute(std::vector<uint64_t>& samples) {
         std::sort(samples.begin(), samples.end());
-        size_t n = samples.size();
-        double sum = std::accumulate(samples.begin(), samples.end(), 0.0);
+
+        std::size_t n = samples.size();
+        if (n == 0) return {};
+
+        uint64_t sum = std::accumulate(samples.begin(), samples.end(), uint64_t{0});
+
         return Stats{
                 samples[n * 50 / 100],
                 samples[n * 90 / 100],
@@ -112,10 +117,9 @@ namespace Timer {
                 samples[n * 999 / 1000],
                 samples.front(),
                 samples.back(),
-                sum / n
+                static_cast<double>(sum) / static_cast<double>(n)
         };
     }
-
     // Print stats table
     inline void print(const std::string& label, const Stats& s) {
         std::cout << "\n[" << label << "]\n";

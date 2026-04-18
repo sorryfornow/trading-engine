@@ -29,7 +29,7 @@
 //   gw.stop();       // signal from another thread to break the loop
 // ─────────────────────────────────────────────────────────────────────────────
 
-template<size_t QUEUE_SIZE = 8192>
+template<std::size_t QUEUE_SIZE = 8192>
 class TCPGateway {
 public:
     TCPGateway(uint16_t port,
@@ -98,9 +98,9 @@ public:
     void stop() { running_ = false; }
 
     // Stats
-    uint64_t messages_received() const { return msg_count_; }
-    uint64_t connections_total() const { return conn_count_; }
-    size_t   connections_active() const { return connections_.size(); }
+    [[nodiscard]]uint64_t messages_received() const { return msg_count_; }
+    [[nodiscard]]uint64_t connections_total() const { return conn_count_; }
+    [[nodiscard]]std::size_t connections_active() const { return connections_.size(); }
 
 private:
     uint16_t port_;
@@ -207,7 +207,7 @@ private:
             return;
         }
 
-        if (!conn.append(tmp, static_cast<size_t>(n))) {
+        if (!conn.append(tmp, static_cast<std::size_t>(n))) {
             // Buffer overflow — client sending garbage or messages too large
             std::fprintf(stderr, "[Gateway] Buffer overflow on fd=%d, disconnecting\n", fd);
             handle_disconnect(fd);

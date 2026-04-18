@@ -12,7 +12,7 @@
 
 // ─── Configuration ───────────────────────────────────────────────────────────
 static constexpr uint16_t PORT       = 9000;
-static constexpr size_t   QUEUE_SIZE = 8192;
+static constexpr std::size_t   QUEUE_SIZE = 8192;
 
 // Book type: all symbols share the same price range / tick / pool size.
 // Adjust per use case. This covers ticks 990–1010 with step 5, pool 200K orders.

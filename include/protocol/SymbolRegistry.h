@@ -39,7 +39,7 @@ public:
     // Lookup symbol by name. Returns INVALID_ID if not found.
     // Used in FIX gateway (not hot path — called once per message parse).
     uint16_t lookup(const char* name) const {
-        size_t name_len = std::strlen(name);
+        std::size_t name_len = std::strlen(name);
         for (uint16_t i = 0; i < count_; i++) {
             if (entries_[i].len == name_len &&
                 std::memcmp(entries_[i].name, name, name_len) == 0) {
@@ -51,7 +51,7 @@ public:
 
     // Lookup symbol by name with known length (avoids strlen).
     // This is what FIXParser calls — pointer + length, no null terminator needed.
-    uint16_t lookup(const char* name, size_t len) const {
+    uint16_t lookup(const char* name, std::size_t len) const {
         for (uint16_t i = 0; i < count_; i++) {
             if (entries_[i].len == len &&
                 std::memcmp(entries_[i].name, name, len) == 0) {
@@ -62,12 +62,12 @@ public:
     }
 
     // Get name by ID (for logging/display only).
-    const char* name(uint16_t id) const {
+    [[nodiscard]]const char* name(uint16_t id) const {
         if (id >= count_) return "???";
         return entries_[id].name;
     }
 
-    uint16_t count() const { return count_; }
+    [[nodiscard]] uint16_t count() const { return count_; }
 
 private:
     struct Entry {

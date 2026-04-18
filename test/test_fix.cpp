@@ -34,7 +34,7 @@ int main() {
         const char* msg = "8=FIX.4.2|35=F|41=2002|";
         auto m = FIXParser::parse(msg, strlen(msg));
         assert(m.type == FIXMessage::Cancel);
-        assert(m.id == 2002);
+        assert(m.orig_id == 2002);  // tag 41 OrigClOrdID → orig_id
         std::cout << "PASSED\n";
         passed++;
     }
@@ -133,7 +133,7 @@ int main() {
         reg.register_symbol("AAPL");
 
         char buf[512];
-        size_t n = FIXParser::build(buf, sizeof(buf),
+        std::size_t n = FIXParser::build(buf, sizeof(buf),
                                      FIXMessage::NewOrder, 9001, "AAPL",
                                      Side::Buy, 1005, 200, 1, '|');
         assert(n > 0);
@@ -156,13 +156,13 @@ int main() {
         reg.register_symbol("MSFT");
 
         char buf[512];
-        size_t n = FIXParser::build(buf, sizeof(buf),
+        std::size_t n = FIXParser::build(buf, sizeof(buf),
                                      FIXMessage::Cancel, 5050, "MSFT",
                                      Side::Buy, 0, 0, 7, '|');
         assert(n > 0);
         auto m = FIXParser::parse(buf, n, &reg, true, '|');
         assert(m.type == FIXMessage::Cancel);
-        assert(m.id == 5050);
+        assert(m.orig_id == 5050);  // tag 41 OrigClOrdID → orig_id
         assert(m.symbol_id == 0);
         assert(m.seq_num == 7);
         std::cout << "PASSED\n";
@@ -173,7 +173,7 @@ int main() {
     section("Test 11: CheckSum Validation");
     {
         char buf[512];
-        size_t n = FIXParser::build(buf, sizeof(buf),
+        std::size_t n = FIXParser::build(buf, sizeof(buf),
                                      FIXMessage::NewOrder, 1100, "AAPL",
                                      Side::Sell, 990, 50, 3, '|');
         assert(n > 0);
@@ -195,7 +195,7 @@ int main() {
     section("Test 12: BodyLength Validation");
     {
         char buf[512];
-        size_t n = FIXParser::build(buf, sizeof(buf),
+        std::size_t n = FIXParser::build(buf, sizeof(buf),
                                      FIXMessage::NewOrder, 1200, "AAPL",
                                      Side::Buy, 1005, 100, 4, '|');
         assert(n > 0);
@@ -208,7 +208,7 @@ int main() {
     section("Test 13: Frame Detection");
     {
         char buf[512];
-        size_t n = FIXParser::build(buf, sizeof(buf),
+        std::size_t n = FIXParser::build(buf, sizeof(buf),
                                      FIXMessage::NewOrder, 1300, "AAPL",
                                      Side::Buy, 1005, 100, 5, '|');
         assert(n > 0);
@@ -222,7 +222,7 @@ int main() {
         // Two messages concatenated — frame returns first message length
         char buf2[1024];
         std::memcpy(buf2, buf, n);
-        size_t n2 = FIXParser::build(buf2 + n, sizeof(buf2) - n,
+        std::size_t n2 = FIXParser::build(buf2 + n, sizeof(buf2) - n,
                                       FIXMessage::Cancel, 1301, "AAPL",
                                       Side::Buy, 0, 0, 6, '|');
         assert(FIXParser::frame(buf2, n + n2, '|') == n);
@@ -238,7 +238,7 @@ int main() {
         reg.register_symbol("ES");
 
         char buf[512];
-        size_t n = FIXParser::build(buf, sizeof(buf),
+        std::size_t n = FIXParser::build(buf, sizeof(buf),
                                      FIXMessage::NewOrder, 1400, "ES",
                                      Side::Sell, 5000, 10, 99,
                                      FIXParser::SOH);
