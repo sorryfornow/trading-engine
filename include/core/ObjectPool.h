@@ -22,11 +22,17 @@ public:
     ObjectPool(const ObjectPool&) = delete;
     ObjectPool& operator=(const ObjectPool&) = delete;
 
+    // Returns nullptr when the pool is exhausted. Callers on the network path
+    // must check: pool capacity is reachable by a client that submits enough
+    // resting orders, so exhaustion is a runtime condition, not a bug.
     T* allocate() {
-        assert(top >= 0 && "ObjectPool exhausted");
+        if (top < 0) return nullptr;
         int index = free_stack[top--];
         return &storage[index];
     }
+
+    bool empty()     const { return top < 0; }
+    int  available() const { return top + 1; }
 
     void release(T* p) {
         int index = static_cast<int>(p - storage);

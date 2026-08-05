@@ -208,8 +208,17 @@ private:
         }
 
         if (!conn.append(tmp, static_cast<std::size_t>(n))) {
-            // Buffer overflow — client sending garbage or messages too large
-            std::fprintf(stderr, "[Gateway] Buffer overflow on fd=%d, disconnecting\n", fd);
+            // The buffer filled without frame() ever finding a message
+            // boundary. By far the most common cause is a delimiter mismatch,
+            // so name the delimiter this server expects rather than reporting
+            // a bare overflow — the buffer is the symptom, not the cause.
+            std::fprintf(stderr,
+                         "[Gateway] fd=%d: %zu bytes buffered with no complete FIX "
+                         "message. Expected delimiter %s — wrong delimiter, or a "
+                         "message larger than %zu bytes. Disconnecting.\n",
+                         fd, conn.used,
+                         delim_ == FIXParser::SOH ? "SOH (0x01)" : "'|'",
+                         Connection::BUF_SIZE);
             handle_disconnect(fd);
             return;
         }

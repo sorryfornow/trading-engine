@@ -69,11 +69,22 @@ public:
         return (MIN_PRICE + index * TICK) / static_cast<double>(MULTIPLIER);
     }
 
-    void add(const Order& o) {
+    // Add a resting order. Returns false and leaves the book untouched if the
+    // order cannot be accepted.
+    //
+    // o.tick arrives straight off the wire, so an out-of-range price is a
+    // client error, not a programming error — it must be rejected, never
+    // asserted. Same for pool exhaustion, which any client can reach by
+    // resting POOL_SIZE orders.
+    bool add(const Order& o) {
+        if (o.tick < MIN_PRICE || o.tick > MAX_PRICE) return false;
+
         int index = to_index(o.tick);
-        assert(index >= 0 && index < LEVELS);
+        if (index < 0 || index >= LEVELS) return false;   // unreachable, kept as a guard
 
         Order* p = pool.allocate();
+        if (!p) return false;                             // pool exhausted
+
         *p = o;
         p->prev = p->next = nullptr;
 
@@ -89,6 +100,7 @@ public:
             if (best_ask_idx == -1 || index < best_ask_idx)
                 best_ask_idx = index;
         }
+        return true;
     }
 
     void cancel(uint32_t order_id) {

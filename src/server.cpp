@@ -32,13 +32,17 @@ static void engine_thread_func(SPSCQueue<FIXMessage, QUEUE_SIZE>& queue,
                                 MultiBookEngine<Book>& engine) {
     std::fprintf(stderr, "[Engine] Thread started.\n");
 
-    uint64_t processed = 0;
+    uint64_t accepted = 0;
+    uint64_t rejected = 0;
     FIXMessage msg;
 
+    // process() returns false for unknown symbol, price outside the book's
+    // range, or an exhausted order pool. Until the response path exists there
+    // is no ExecutionReport to send, so rejects are counted here rather than
+    // reported to the client.
     while (g_running.load(std::memory_order_relaxed)) {
         if (queue.pop(msg)) {
-            engine.process(msg, nullptr);  // nullptr = no trade callback (silent)
-            processed++;
+            engine.process(msg, nullptr) ? ++accepted : ++rejected;
         }
         // No sleep — busy poll for lowest latency.
         // In production, could use a conditional variable or yield strategy.
@@ -46,11 +50,11 @@ static void engine_thread_func(SPSCQueue<FIXMessage, QUEUE_SIZE>& queue,
 
     // Drain remaining messages after stop signal
     while (queue.pop(msg)) {
-        engine.process(msg, nullptr);
-        processed++;
+        engine.process(msg, nullptr) ? ++accepted : ++rejected;
     }
 
-    std::fprintf(stderr, "[Engine] Thread stopped. Processed %llu messages.\n", processed);
+    std::fprintf(stderr, "[Engine] Thread stopped. Accepted %llu, rejected %llu.\n",
+                 accepted, rejected);
 }
 
 // ─── Main ────────────────────────────────────────────────────────────────────

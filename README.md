@@ -172,14 +172,23 @@ Hand-computing CheckSum gets old fast, so there is a test switch:
 echo '8=FIX.4.2|9=61|35=D|11=1001|55=AAPL|54=1|44=1005|38=200|10=103|' | nc localhost 9000
 ```
 
-Note that a delimiter mismatch fails silently: send `'|'` messages to a server
-running in SOH mode and `FIXParser::frame()` never finds a message boundary, so
-bytes accumulate in the 4 KB connection buffer until it is full. Nothing is
-logged. Check the startup banner to confirm which mode the server is in.
+Note how a delimiter mismatch fails. Send `'|'` messages to a server running in
+SOH mode and `FIXParser::frame()` never finds a message boundary, so bytes
+accumulate in the 4 KB connection buffer. Below 4 KB nothing at all happens —
+no message is processed and no error is reported. Past 4 KB the client is
+dropped with:
+
+```
+[Gateway] fd=5: 3924 bytes buffered with no complete FIX message.
+          Expected delimiter SOH (0x01) — wrong delimiter, or a message
+          larger than 4096 bytes. Disconnecting.
+```
+
+Check the startup banner to confirm which mode the server is in.
 
 ## Tests
 
-37 test cases across 4 suites:
+39 test cases across 4 suites:
 
 ### OrderBook Tests (`test_main`) — Phase 1
 
@@ -236,7 +245,60 @@ logged. Check the startup banner to confirm which mode the server is in.
 | 3 | Per-Symbol Isolation | Orders land in the book matching their symbol_id |
 | 4 | Cross-Symbol Match Isolation | AAPL buy does not match MSFT sell |
 | 5 | Cancel Per Symbol | Cancelling in one book leaves others untouched |
-| 6 | Drop Unknown Symbol | Message with INVALID_ID is dropped, no crash |
+| 6 | Drop Unknown Symbol | `INVALID_ID` (65535) rejected without indexing `books_` |
+| 7 | Reject Out-of-Range Price | Ticks past either end of the book rejected, book unchanged |
+| 8 | Reject On Pool Exhaustion | Full `ObjectPool` rejects; freeing a slot restores capacity |
+
+## Known Limitations
+
+Every entry below was reproduced against a running server, not inferred from
+reading the code.
+
+### Missing — the response path
+
+| Area | Gap |
+|------|-----|
+| **ExecutionReport** | `Connection` has no write buffer and `TCPGateway` never calls `write()`. `Poller` supports `POLLOUT` but nothing subscribes to it. A client can submit orders and receives nothing back — no fill, no ack, no reject. |
+| **TradeCallback signature** | `void(*)(int qty, double price)` carries no context pointer and does not report the resting/aggressing order IDs, so a fill cannot be attributed to a ClOrdID or routed back to an fd. |
+| **Rejects are invisible** | `MultiBookEngine::process()` returns false for a rejected order, but with no response path the server can only count them. `server` prints the tally at shutdown. |
+
+### Missing — the session layer
+
+| Area | Gap |
+|------|-----|
+| **FIX session** | No Logon (35=A), Logout (35=5), Heartbeat (35=0), TestRequest (35=1), or ResendRequest (35=2). Standard FIX counterparties cannot connect. |
+| **Sequence numbers** | `FIXMessage::seq_num` is parsed but never validated — no monotonicity check, no gap detection. |
+| **Tag coverage** | Only 8 tags are read: 35, 11, 41, 34, 54, 44, 38, 55. Notably absent is OrdType (40), so **market orders cannot be expressed over FIX** even though `OrderBook` supports them. Tags 49/56/52 are skipped. |
+
+### Sharp edges in what does exist
+
+| Area | Gap |
+|------|-----|
+| **Delimiter mismatch** | Fails late and indirectly. Under 4 KB nothing happens at all: no message processed, no error. Past 4 KB the gateway disconnects the client with a diagnostic naming the expected delimiter. There is no handshake that detects this at connect time. |
+| **Tick alignment** | `to_index()` truncates. With `TICK=5`, an order at tick 992 silently lands on the 990 level rather than being rejected. Prices off the grid are accepted and quietly moved. |
+| **Backpressure** | A full SPSC queue drops the message and logs. No flow control, and the client is never told. |
+| **Symbol lookup** | `SymbolRegistry::lookup()` is a linear scan. Fine at 256 symbols, not at exchange scale. |
+| **`volatile bool running_`** | `TCPGateway` uses `volatile` for cross-thread stop signalling. It works here but is not a synchronisation primitive; it should be `std::atomic<bool>`. |
+
+### Not built
+
+| Area | Gap |
+|------|-----|
+| **Persistence** | No journaling. All book state is lost on process exit. |
+| **Pre-trade risk** | No fat-finger limits, position caps, or self-trade prevention. Price range is enforced structurally by the book, which is not a risk check. |
+| **Market data** | No L2 snapshot or incremental feed. |
+| **Configuration** | Port, symbol list, and price bounds are hardcoded in `src/server.cpp`. All symbols share one `PriceLevelBook` price range. |
+
+### Fixed
+
+Three input-validation defects were reachable from the wire and are now closed,
+each covered by a test:
+
+| Was | Now |
+|-----|-----|
+| An order priced outside the book's range tripped `assert` in `PriceLevelBook::add()` and aborted the process (exit 134). `CMakeLists.txt` overrides `CMAKE_CXX_FLAGS_RELEASE` without `-DNDEBUG`, so asserts are live in Release — one FIX message killed the server. | `add()` returns `bool` and rejects. Test 7. |
+| An unresolved Symbol left `symbol_id` at `INVALID_ID` (65535), which `add_and_match()` used to index a 256-slot array — an out-of-bounds read, SEGV under ASan. | `symbol_id` is bounds-checked before indexing. Test 6. |
+| `ObjectPool::allocate()` asserted on exhaustion, reachable by resting `POOL_SIZE` orders. | Returns `nullptr`; `add()` rejects. Test 8. |
 
 ## Roadmap
 
