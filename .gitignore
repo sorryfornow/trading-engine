@@ -32,10 +32,11 @@ cachegrind.out.*
 callgrind.out.*
 perf.data*
 
-# IDE
+# IDE / tooling
 .idea/
 .vscode/
 *.iml
+.claude/
 
 # OS
 .DS_Store
