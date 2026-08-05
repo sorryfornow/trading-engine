@@ -7,6 +7,7 @@
 template<typename T, std::size_t N>
 class SPSCQueue {
 private:
+    static_assert(N > 0 && (N & (N - 1)) == 0, "N must be a power of two");
     alignas(CACHE_LINE_SIZE) std::atomic<std::size_t> head_{0};  // consumer owns, points to next item to read
     alignas(CACHE_LINE_SIZE) std::atomic<std::size_t> tail_{0};  // producer owns, points to next slot to write
     T buffer_[N];
