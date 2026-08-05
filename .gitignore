@@ -3,16 +3,21 @@ build/
 cmake-build-*/
 out/
 
-# Compiled binaries
-bench_bin
-bench_dbg
-engine
-server
-test_bin
-test_main
-test_fix
-test_multibook
-test_spsc
+# Compiled binaries from a direct g++ build, which land in the repo root.
+# Anchored with a leading slash: a bare pattern matches at every level, so
+# plain `engine` also matched include/engine/ and silently kept the whole
+# directory out of the repository.
+/bench_bin
+/bench_dbg
+/engine
+/server
+/test_bin
+/test_main
+/test_fix
+/test_multibook
+/test_spsc
+/test_connection
+/test_poller
 
 # Object files and debug symbols
 *.o
