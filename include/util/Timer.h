@@ -8,12 +8,13 @@
 #include <iostream>
 #include <iomanip>
 
-// ─── 跨平台计时 / Cross-platform timing ─────────────────────────────────────
+// ─── Cross-platform timing ───────────────────────────────────────────────────
 //
-//   x86 / AMD64 (Linux)  → __rdtsc()            reads CPU timestamp counter
-//   ARM64 / Apple M      → clock_gettime()       monotonic nanoseconds
+//   x86 / AMD64 (Linux)  → rdtsc          reads the CPU timestamp counter
+//   ARM64 / Apple M      → cntvct_el0     system virtual count register
+//   Other                → clock_gettime  monotonic nanoseconds
 //
-//   用法 / Usage:
+//   Usage:
 //   uint64_t t0 = Timer::now();
 //   ... do work ...
 //   uint64_t ns = Timer::to_ns(Timer::now() - t0);
@@ -21,7 +22,6 @@
 namespace Timer {
 
 #if defined(__x86_64__) || defined(_M_X64)
-    // x86: 用 rdtsc 读 cycle，再除以频率换算成 ns
     // x86: read cycles via rdtsc, then divide by CPU frequency to get ns
 
     inline uint64_t now() {
@@ -30,9 +30,8 @@ namespace Timer {
         return ((uint64_t)hi << 32) | lo;
     }
 
-    // 估算 CPU 频率 (GHz) / Estimate CPU frequency in GHz
-    // 用 sleep 100ms 前后的 cycle 差来推算
-    // Measures cycle delta over a 100ms sleep
+    // Estimate CPU frequency in GHz by measuring the cycle delta
+    // across a 100ms sleep.
     inline double cpu_ghz() {
         struct timespec t0, t1;
         clock_gettime(CLOCK_MONOTONIC, &t0);
@@ -47,9 +46,7 @@ namespace Timer {
         return (c1 - c0) / elapsed_ns;  // cycles per ns = GHz
     }
 
-    // cycles → nanoseconds
-    // 第一次调用时自动测量 CPU 频率
-    // Auto-measures CPU frequency on first call
+    // cycles → nanoseconds. Auto-measures CPU frequency on first call.
     inline uint64_t to_ns(uint64_t cycles) {
         static double ghz = cpu_ghz();
         return static_cast<uint64_t>(cycles / ghz);
@@ -59,9 +56,10 @@ namespace Timer {
 
 #elif defined(__aarch64__) || defined(__arm64__)
 
-    // ARM64 / Apple M: use system virtual count register 用 CNTVCT_EL0 寄存器
+    // ARM64 / Apple M: read the CNTVCT_EL0 system virtual count register.
 
-    // allows the function to be defined in multiple translation units without violating the One Definition Rule (ODR)
+    // inline allows the function to be defined in multiple translation units
+    // without violating the One Definition Rule (ODR).
     inline uint64_t now() {
         uint64_t val;
         __asm__ __volatile__("mrs %0, cntvct_el0" : "=r"(val));
@@ -94,14 +92,14 @@ namespace Timer {
     inline const char* platform() { return "Generic (clock_gettime)"; }
 #endif
 
-    // ─── 统计工具 / Stats utilities ──────────────────────────────────────────────
+    // ─── Stats utilities ─────────────────────────────────────────────────────
 
     struct Stats {
         uint64_t p50, p90, p99, p999, min_ns, max_ns;
         double   mean_ns;
     };
 
-    // 从一组纳秒样本计算百分位 / Compute percentiles from nanosecond samples
+    // Compute percentiles from a set of nanosecond samples.
     inline Stats compute(std::vector<uint64_t>& samples) {
         std::sort(samples.begin(), samples.end());
 

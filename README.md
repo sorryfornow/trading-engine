@@ -38,7 +38,7 @@ trading-engine/
 │   │   └── SymbolRegistry.h    Symbol string → uint16_t mapping (O(1) array index)
 │   ├── transport/      ← Networking + queue
 │   │   ├── Poller.h            Cross-platform epoll (Linux) / kqueue (macOS)
-│   │   ├── Connection.h        Per-fd read buffer, TCP framing (粘包/分片)
+│   │   ├── Connection.h        Per-fd read buffer, TCP framing (fragmentation/coalescing)
 │   │   ├── TCPGateway.h        Non-blocking TCP server, accept/read/parse/push
 │   │   └── SPSCQueue.h         Lock-free SPSC ring buffer (acquire/release)
 │   ├── engine/         ← Engine layer
@@ -212,12 +212,32 @@ echo '8=FIX.4.2|9=61|35=D|11=1001|55=AAPL|54=1|44=1005|38=200|10=103|' | nc loca
 
 | # | Test | What it validates |
 |---|------|-------------------|
-| 1 | Create Books | Two symbols registered, book_count == 2 |
-| 2 | Cross-symbol Isolation | AAPL buy does not match MSFT sell |
-| 3 | Same-symbol Match | AAPL buy + AAPL sell → trade |
-| 4 | Cancel Routing | Cancel AAPL order doesn't affect MSFT |
-| 5 | Unknown Symbol | INVALID_ID message silently dropped |
-| 6 | Mixed Flow | Interleaved multi-symbol new + cancel stream |
+| 1 | SymbolRegistry Register/Lookup | Symbol strings map to stable uint16_t IDs |
+| 2 | Book Creation | Books allocated per symbol, `book_count()` correct |
+| 3 | Per-Symbol Isolation | Orders land in the book matching their symbol_id |
+| 4 | Cross-Symbol Match Isolation | AAPL buy does not match MSFT sell |
+| 5 | Cancel Per Symbol | Cancelling in one book leaves others untouched |
+| 6 | Drop Unknown Symbol | Message with INVALID_ID is dropped, no crash |
+
+## Current Status
+
+The order path is complete end to end: **TCP → framing → FIX parse → SPSC queue → multi-symbol matching**.
+The response path is not yet built — a client can submit orders but receives nothing back.
+
+### Known Limitations
+
+| Area | Gap |
+|------|-----|
+| **ExecutionReport** | `Connection` has no write buffer and `TCPGateway` never calls `write()`. `Poller` supports `POLLOUT` but nothing subscribes to it. |
+| **TradeCallback signature** | `void(*)(int qty, double price)` carries no context pointer and does not report the resting/aggressing order IDs, so a fill cannot be attributed to a ClOrdID or routed back to an fd. |
+| **FIX session layer** | No Logon (35=A), Logout (35=5), Heartbeat (35=0), TestRequest (35=1), or ResendRequest (35=2). Standard FIX counterparties cannot connect. |
+| **Sequence numbers** | `FIXMessage::seq_num` is parsed but never validated — no monotonicity check, no gap detection. |
+| **Pre-trade risk** | No fat-finger limits, position caps, or self-trade prevention. Price bounds are enforced by `assert`, which is compiled out under `NDEBUG`. |
+| **Bounds checking** | `MultiBookEngine::add_and_match()` and `cancel()` index `books_[symbol_id]` without a range check, unlike `get()`. |
+| **Persistence** | No journaling. All book state is lost on process exit. |
+| **Market data** | No L2 snapshot or incremental feed. |
+| **Backpressure** | A full queue drops the message; no flow control. |
+| **Configuration** | Port, symbol list, and price bounds are hardcoded in `src/server.cpp`. All symbols share one `PriceLevelBook` price range. |
 
 ## Roadmap
 
@@ -225,6 +245,11 @@ echo '8=FIX.4.2|9=61|35=D|11=1001|55=AAPL|54=1|44=1005|38=200|10=103|' | nc loca
 - [x] **Phase 2** — PriceLevelBook (array), intrusive linked list, ObjectPool, cache line alignment, p99 < 500 ns
 - [x] **Phase 3** — SPSCQueue (lock-free), FIX parser, dual-thread architecture, p99 = 250 ns
 - [x] **Phase 4** — FIX 4.2 protocol (BodyLength/CheckSum/framing), SymbolRegistry, MultiBookEngine, TCP Gateway (epoll/kqueue), multi-symbol support
-- [ ] **Phase 5** — Risk management (pre-trade checks), WAL persistence, crash recovery
-- [ ] **Phase 6** — Market data dissemination (UDP multicast), monitoring/metrics
-- [ ] **Phase 7** — Kernel bypass (io_uring/DPDK), huge pages, CPU pinning, NUMA awareness
+- [ ] **Phase 5** — Response path: bounds-checked dispatch, context-carrying `TradeCallback` with order IDs, ExecutionReport (35=8) over an engine→gateway return queue, write buffering driven by `POLLOUT`, pre-trade risk checks with explicit Reject (35=3)
+- [ ] **Phase 6** — FIX session layer: Logon/Logout handshake, heartbeat timers, MsgSeqNum validation, gap detection and ResendRequest, per-connection session state machine. Target: interoperate with a stock QuickFIX client
+- [ ] **Phase 7** — Operability: write-ahead journaling and crash recovery, tick-to-trade latency histograms, external configuration, graceful restart
+- [ ] **Phase 8** — Scale-out: L2 market data dissemination, symbol-sharded engine threads, CPU pinning, huge pages, NUMA awareness
+
+## License
+
+MIT — see [LICENSE](LICENSE).
