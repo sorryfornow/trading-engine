@@ -35,6 +35,10 @@ add_executable(test_fix test/test_fix.cpp)
 # Phase 4: Multi-symbol engine tests
 add_executable(test_multibook test/test_multibook.cpp)
 
+# Phase 4: Transport layer — TCP framing buffer and poller
+add_executable(test_connection test/test_connection.cpp)
+add_executable(test_poller     test/test_poller.cpp)
+
 # ── Executables ───────────────────────────────────────────────────────────────
 # Phase 3: Dual-thread engine demo
 add_executable(engine src/engine.cpp)

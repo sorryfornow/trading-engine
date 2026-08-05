@@ -188,7 +188,7 @@ Check the startup banner to confirm which mode the server is in.
 
 ## Tests
 
-39 test cases across 4 suites:
+58 test cases across 6 suites:
 
 ### OrderBook Tests (`test_main`) — Phase 1
 
@@ -249,6 +249,40 @@ Check the startup banner to confirm which mode the server is in.
 | 7 | Reject Out-of-Range Price | Ticks past either end of the book rejected, book unchanged |
 | 8 | Reject On Pool Exhaustion | Full `ObjectPool` rejects; freeing a slot restores capacity |
 
+### Connection Tests (`test_connection`) — Phase 4
+
+Pure memory tests — `Connection` holds its fd as a plain integer and never
+touches it, so no socket is involved.
+
+| # | Test | What it validates |
+|---|------|-------------------|
+| 1 | Single Complete Message | One read carrying one whole message |
+| 2 | Fragmented Across Reads | Half a message yields nothing and is not consumed |
+| 3 | Byte-At-A-Time Delivery | Only the final byte completes the message |
+| 4 | Coalesced Messages | Three messages in one read, drained by the `while` loop |
+| 5 | Compaction Keeps Remainder Intact | Trailing fragment survives `memmove` byte-for-byte |
+| 6 | Buffer Capacity Boundary | Exactly 4096 fits, 4097 is refused, buffer undisturbed |
+| 7 | Garbage Is Never Framed | Boundary-free bytes accumulate, never yield a message |
+| 8 | Delimiter Mismatch | Pipe message on a SOH connection is unframeable and stays put |
+| 9 | Validation Pass-Through | Bad CheckSum rejected but still drained, so the connection cannot wedge |
+| 10 | Move Preserves Buffered Bytes | `unordered_map` node moves keep the partial message |
+
+### Poller Tests (`test_poller`) — Phase 4
+
+Run over `socketpair()` — no ports, no listening socket, nothing to bind.
+
+| # | Test | What it validates |
+|---|------|-------------------|
+| 1 | Empty Poller Times Out | No registrations, no events |
+| 2 | Registered Idle Fd Is Quiet | Registration alone does not fire |
+| 3 | Readable Fd Is Reported | Written data surfaces as `POLLIN` |
+| 4 | Level-Triggered Semantics | Unconsumed data keeps being reported — the contract `handle_read()`'s single 2048-byte read depends on |
+| 5 | Writable Fd Is Reported | `POLLOUT` works on both backends, ready for the Phase 5 response path |
+| 6 | Removed Fd Goes Silent | `remove()` takes effect even with data still pending |
+| 7 | Selective Reporting Across Many Fds | Four registered, only the two that moved come back |
+| 8 | Peer Close Wakes The Poller | Closed peer produces an event so the disconnect path can run |
+| 9 | Result Set Respects max_events | Batch is capped and the overflow is not lost |
+
 ## Known Limitations
 
 Every entry below was reproduced against a running server, not inferred from
@@ -279,6 +313,7 @@ reading the code.
 | **Backpressure** | A full SPSC queue drops the message and logs. No flow control, and the client is never told. |
 | **Symbol lookup** | `SymbolRegistry::lookup()` is a linear scan. Fine at 256 symbols, not at exchange scale. |
 | **`volatile bool running_`** | `TCPGateway` uses `volatile` for cross-thread stop signalling. It works here but is not a synchronisation primitive; it should be `std::atomic<bool>`. |
+| **`TCPGateway` is untested** | `Connection` and `Poller` are covered, but the 237 lines that wire them together — accept, the read loop, disconnect, queue-full handling — have no test. Exercising them needs a real listening socket, so this is an integration test rather than a unit test. |
 
 ### Not built
 
