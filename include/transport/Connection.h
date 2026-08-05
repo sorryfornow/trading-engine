@@ -24,13 +24,13 @@ public:
     int fd = -1;
     char buf[BUF_SIZE];
     std::size_t used = 0;       // how many bytes are in buf
-    char delim = '|';           // FIX delimiter: SOH in production, '|' for testing
+    char delim = FIXParser::SOH;  // FIX field delimiter; '|' only for testing
 
     Connection() : fd(-1), used(0) {
         buf[0] = '\0';
     }
 
-    explicit Connection(int fd_, char delim_ = '|')
+    explicit Connection(int fd_, char delim_ = FIXParser::SOH)
         : fd(fd_), used(0), delim(delim_) {
         buf[0] = '\0';
     }

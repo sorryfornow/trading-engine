@@ -149,14 +149,33 @@ g++ -std=c++17 -O3 -Iinclude -pthread -o server src/server.cpp && ./server
 
 ### TCP Server Usage
 
+The server speaks real FIX 4.2: fields are separated by SOH (`0x01`) and every
+message is checked for BodyLength and CheckSum before it reaches the engine.
+
 ```bash
 # Start the server
 ./server
 # → Listening on port 9000, Ctrl+C to stop
 
-# In another terminal, send FIX messages:
+# In another terminal — SOH is non-printable, so build the message with printf.
+# BodyLength (9) and CheckSum (10) must both be correct or the message is dropped.
+printf '8=FIX.4.2\x019=87\x0135=D\x0149=CLIENT\x0156=SERVER\x0134=1\x0152=20260413-00:00:00\x0111=1001\x0155=AAPL\x0154=1\x0144=1005\x0138=200\x0110=078\x01' | nc localhost 9000
+```
+
+Hand-computing CheckSum gets old fast, so there is a test switch:
+
+```bash
+# --pipe: '|' instead of SOH, and BodyLength/CheckSum validation off.
+# Testing only — lets you type messages by hand.
+./server --pipe
+
 echo '8=FIX.4.2|9=61|35=D|11=1001|55=AAPL|54=1|44=1005|38=200|10=103|' | nc localhost 9000
 ```
+
+Note that a delimiter mismatch fails silently: send `'|'` messages to a server
+running in SOH mode and `FIXParser::frame()` never finds a message boundary, so
+bytes accumulate in the 4 KB connection buffer until it is full. Nothing is
+logged. Check the startup banner to confirm which mode the server is in.
 
 ## Tests
 

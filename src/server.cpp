@@ -1,4 +1,5 @@
 #include <cstdio>
+#include <cstring>
 #include <thread>
 #include <atomic>
 #include <csignal>
@@ -53,7 +54,22 @@ static void engine_thread_func(SPSCQueue<FIXMessage, QUEUE_SIZE>& queue,
 }
 
 // ─── Main ────────────────────────────────────────────────────────────────────
-int main() {
+int main(int argc, char** argv) {
+    // --pipe swaps the SOH field delimiter for '|' and drops BodyLength/CheckSum
+    // validation, so messages can be hand-typed over nc. Testing only.
+    bool pipe_mode = false;
+    for (int i = 1; i < argc; i++) {
+        if (std::strcmp(argv[i], "--pipe") == 0) {
+            pipe_mode = true;
+        } else {
+            std::fprintf(stderr, "Usage: %s [--pipe]\n", argv[0]);
+            return 1;
+        }
+    }
+
+    const char delim    = pipe_mode ? '|' : FIXParser::SOH;
+    const bool validate = !pipe_mode;
+
     // Install signal handlers for graceful shutdown
     std::signal(SIGINT, signal_handler);    // Ctrl+C
     std::signal(SIGTERM, signal_handler);   // kill
@@ -61,6 +77,9 @@ int main() {
     std::fprintf(stderr, "================================================\n");
     std::fprintf(stderr, "  Trading Engine Server\n");
     std::fprintf(stderr, "  Port: %u | Queue: %zu slots\n", PORT, QUEUE_SIZE);
+    std::fprintf(stderr, "  Delimiter: %s | Validation: %s\n",
+                 pipe_mode ? "'|' (TEST MODE)" : "SOH (0x01)",
+                 validate ? "BodyLength + CheckSum" : "off");
     std::fprintf(stderr, "  Ctrl+C to stop\n");
     std::fprintf(stderr, "================================================\n\n");
 
@@ -89,9 +108,7 @@ int main() {
 
     // ── 5. Run gateway on main thread ───────────────────────────────────
     //    (blocks until g_running becomes false)
-    TCPGateway<QUEUE_SIZE> gateway(PORT, queue, registry,
-                                    false,  // validate=false for now
-                                    '|');   // pipe delimiter for testing
+    TCPGateway<QUEUE_SIZE> gateway(PORT, queue, registry, validate, delim);
 
     // Gateway checks g_running via its own running_ flag
     std::thread gateway_thread([&]() {

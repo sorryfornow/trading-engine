@@ -35,8 +35,8 @@ public:
     TCPGateway(uint16_t port,
                SPSCQueue<FIXMessage, QUEUE_SIZE>& queue,
                const SymbolRegistry& registry,
-               bool validate_fix = false,
-               char delim = '|')
+               bool validate_fix = true,
+               char delim = FIXParser::SOH)
         : port_(port)
         , queue_(queue)
         , registry_(registry)
