@@ -1,31 +1,41 @@
-.*
-!.gitignore
-
-# CMake build
-
+# Build directories
 build/
-cmake-build-debug/
-cmake-build-release/
+cmake-build-*/
+out/
 
-# CMake generated files
+# Compiled binaries
+bench_bin
+bench_dbg
+engine
+server
+test_bin
+test_main
+test_fix
+test_multibook
+test_spsc
 
+# Object files and debug symbols
+*.o
+*.a
+*.so
+*.dylib
+*.dSYM/
+
+# CMake
 CMakeCache.txt
 CMakeFiles/
-Makefile
 cmake_install.cmake
+compile_commands.json
 
-# Binary / compiled files
+# Profiling output
+cachegrind.out.*
+callgrind.out.*
+perf.data*
 
-*.o
-*.so
-*.a
+# IDE
+.idea/
+.vscode/
+*.iml
 
-# Executables
-
-a.out
-engine
-
-# Temp / logs
-
-*.log
-*.tmp
+# OS
+.DS_Store
