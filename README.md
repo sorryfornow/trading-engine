@@ -188,7 +188,7 @@ Check the startup banner to confirm which mode the server is in.
 
 ## Tests
 
-58 test cases across 6 suites:
+69 test cases across 7 suites:
 
 ### OrderBook Tests (`test_main`) — Phase 1
 
@@ -283,6 +283,27 @@ Run over `socketpair()` — no ports, no listening socket, nothing to bind.
 | 8 | Peer Close Wakes The Poller | Closed peer produces an event so the disconnect path can run |
 | 9 | Result Set Respects max_events | Batch is capped and the overflow is not lost |
 
+### Gateway Tests (`test_gateway`) — Phase 4
+
+Integration tests. These open a real listening socket on a kernel-assigned port
+and drive it over loopback TCP — the only way to reach `accept()`, the read
+loop, and the disconnect path. Every assertion runs after the gateway thread
+has been stopped and joined, so nothing reads gateway state concurrently.
+
+| # | Test | What it validates |
+|---|------|-------------------|
+| 1 | Accept And Forward | A connection is accepted and one message reaches the queue intact |
+| 2 | Fragmented Send | Two writes separated in time produce one message |
+| 3 | Coalesced Send | Three messages in one write all reach the queue, in order |
+| 4 | Concurrent Clients | A half-message on one connection does not disturb another |
+| 5 | Disconnect Then Reconnect | Cleanup leaves the gateway able to serve the next client |
+| 6 | Immediate Close | Connect-then-vanish does not wedge the event loop |
+| 7 | Invalid CheckSum Never Reaches The Queue | Rejected message is dropped; the one behind it still arrives |
+| 8 | Buffer Ceiling Disconnects The Client | Unframeable client sees EOF; the gateway keeps serving |
+| 9 | Queue Full Drops, Gateway Survives | Overflow is shed rather than blocking the read loop |
+| 10 | Pipe Delimiter Mode | The `--pipe` test switch, end to end |
+| 11 | Stop Terminates The Event Loop | `stop()` is observed within the poll timeout |
+
 ## Known Limitations
 
 Every entry below was reproduced against a running server, not inferred from
@@ -313,7 +334,7 @@ reading the code.
 | **Backpressure** | A full SPSC queue drops the message and logs. No flow control, and the client is never told. |
 | **Symbol lookup** | `SymbolRegistry::lookup()` is a linear scan. Fine at 256 symbols, not at exchange scale. |
 | **`volatile bool running_`** | `TCPGateway` uses `volatile` for cross-thread stop signalling. It works here but is not a synchronisation primitive; it should be `std::atomic<bool>`. |
-| **`TCPGateway` is untested** | `Connection` and `Poller` are covered, but the 237 lines that wire them together — accept, the read loop, disconnect, queue-full handling — have no test. Exercising them needs a real listening socket, so this is an integration test rather than a unit test. |
+| **Gateway tests bind a real port** | `test_gateway` asks the kernel for a free port, releases it, then lets the gateway bind it. That window is a race, so the suite is in principle flaky under heavy parallel load — it is not, in practice, on loopback. |
 
 ### Not built
 

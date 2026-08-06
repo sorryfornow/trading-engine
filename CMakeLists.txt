@@ -39,6 +39,10 @@ add_executable(test_multibook test/test_multibook.cpp)
 add_executable(test_connection test/test_connection.cpp)
 add_executable(test_poller     test/test_poller.cpp)
 
+# Phase 4: Gateway integration tests — opens a real listening socket
+add_executable(test_gateway test/test_gateway.cpp)
+target_link_libraries(test_gateway PRIVATE pthread)
+
 # ── Executables ───────────────────────────────────────────────────────────────
 # Phase 3: Dual-thread engine demo
 add_executable(engine src/engine.cpp)
