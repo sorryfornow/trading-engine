@@ -4,6 +4,7 @@
 #include <cassert>
 #include <iostream>
 #include <string>
+#include <vector>
 
 // Use a small pool for testing
 using TestBook = PriceLevelBook<990, 1010, 5, 1, 1000>;
@@ -91,22 +92,32 @@ int main() {
         engine.create_book(aapl);
         engine.create_book(msft);
 
-        int trades = 0;
-        auto cb = +[](int, double) {};  // noop
+        struct Tally { int count = 0; Fill last{}; } tally;
+        auto cb = +[](void* ctx, const Fill& f) {
+            auto* t = static_cast<Tally*>(ctx);
+            t->count++;
+            t->last = f;
+        };
 
         // Sell on AAPL — should NOT match buy on MSFT
         engine.add_and_match(aapl, Order{10, Side::Buy,  1000, 100});
-        engine.add_and_match(msft, Order{20, Side::Sell, 1000, 100}, cb);
+        engine.add_and_match(msft, Order{20, Side::Sell, 1000, 100}, cb, &tally);
 
-        // Both should still be resting
+        // Both should still be resting, and nothing traded
         assert(engine.get(aapl)->best_bid() == 1000);
         assert(engine.get(msft)->best_ask() == 1000);
+        assert(tally.count == 0);
 
         // Now cross within AAPL
-        engine.add_and_match(aapl, Order{11, Side::Sell, 1000, 100}, cb);
-        // Book should be empty
-        assert(engine.get(aapl)->best_bid() == 0);
-        (void)trades;
+        engine.add_and_match(aapl, Order{11, Side::Sell, 1000, 100}, cb, &tally);
+        assert(engine.get(aapl)->best_bid() == 0);   // book empty
+
+        // The Fill must identify AAPL, not MSFT — create_book() stamped it.
+        assert(tally.count == 1);
+        assert(tally.last.symbol_id == aapl);
+        assert(tally.last.bid_id == 10 && tally.last.ask_id == 11);
+        assert(tally.last.qty == 100 && tally.last.tick == 1000);
+        assert(tally.last.bid_filled && tally.last.ask_filled);
         std::cout << "PASSED\n";
         passed++;
     }
@@ -204,7 +215,89 @@ int main() {
         passed++;
     }
 
-    constexpr int total = 8;
+    // Test 9: an off-grid price is rejected rather than snapped
+    section("Test 9: Reject Off-Grid Price");
+    {
+        // TestBook has TICK=5, so the only legal ticks are 990/995/.../1010.
+        // 992 is inside the range but not on the grid. to_index() divides, so
+        // without a check it would truncate to index 0 and the order would
+        // rest at 990 — a price the client never sent, with no reject.
+        Engine engine;
+        engine.create_book(0);
+
+        assert(engine.add_and_match(0, Order{1, Side::Buy, 992, 10}) == false);
+        assert(engine.get(0)->best_bid() == 0);        // nothing rested
+
+        assert(engine.add_and_match(0, Order{2, Side::Sell, 1007, 10}) == false);
+        assert(engine.get(0)->best_ask() == 0);
+
+        // Both grid boundaries are still accepted.
+        assert(engine.add_and_match(0, Order{3, Side::Buy,   990, 10}) == true);
+        assert(engine.add_and_match(0, Order{4, Side::Sell, 1010, 10}) == true);
+        assert(engine.get(0)->best_bid() == 990);
+        assert(engine.get(0)->best_ask() == 1010);
+        std::cout << "PASSED\n";
+        passed++;
+    }
+
+    // Test 10: Fill contents across partial and multi-level executions
+    section("Test 10: Fill Reporting");
+    {
+        Engine engine;
+        engine.create_book(0);
+
+        struct Log { std::vector<Fill> fills; } log;
+        auto cb = +[](void* ctx, const Fill& f) {
+            static_cast<Log*>(ctx)->fills.push_back(f);
+        };
+
+        // Resting buy 100 @ 1000; incoming sell 40 @ 1000 partially fills it.
+        engine.add_and_match(0, Order{1, Side::Buy, 1000, 100}, cb, &log);
+        assert(log.fills.empty());                     // nothing crossed yet
+
+        engine.add_and_match(0, Order{2, Side::Sell, 1000, 40}, cb, &log);
+        assert(log.fills.size() == 1);
+        {
+            const Fill& f = log.fills[0];
+            assert(f.bid_id == 1 && f.ask_id == 2);
+            assert(f.qty == 40);
+            assert(f.tick == 1000);
+            assert(f.bid_filled == false);             // 60 still resting
+            assert(f.ask_filled == true);              // aggressor consumed
+        }
+        assert(engine.get(0)->best_bid() == 1000);     // remainder rests
+
+        // A sell that sweeps the rest and then some.
+        log.fills.clear();
+        engine.add_and_match(0, Order{3, Side::Sell, 1000, 60}, cb, &log);
+        assert(log.fills.size() == 1);
+        assert(log.fills[0].bid_id == 1 && log.fills[0].ask_id == 3);
+        assert(log.fills[0].qty == 60);
+        assert(log.fills[0].bid_filled && log.fills[0].ask_filled);
+        assert(engine.get(0)->best_bid() == 0);        // book drained
+
+        // One aggressor sweeping two price levels emits two Fills, best price
+        // first, each naming the resting order it hit.
+        log.fills.clear();
+        engine.add_and_match(0, Order{10, Side::Sell, 1000, 50}, cb, &log);
+        engine.add_and_match(0, Order{11, Side::Sell, 1005, 50}, cb, &log);
+        assert(log.fills.empty());
+
+        engine.add_and_match(0, Order{12, Side::Buy, 1005, 80}, cb, &log);
+        assert(log.fills.size() == 2);
+        assert(log.fills[0].tick == 1000 && log.fills[0].qty == 50);
+        assert(log.fills[0].ask_id == 10 && log.fills[0].ask_filled);
+        assert(log.fills[1].tick == 1005 && log.fills[1].qty == 30);
+        assert(log.fills[1].ask_id == 11 && log.fills[1].ask_filled == false);
+        assert(log.fills[1].bid_id == 12 && log.fills[1].bid_filled == true);
+
+        // Every Fill carries the symbol the book was created for.
+        for (const Fill& f : log.fills) assert(f.symbol_id == 0);
+        std::cout << "PASSED\n";
+        passed++;
+    }
+
+    constexpr int total = 10;
     std::cout << "\n======================================\n";
     std::cout << "  MultiBook Results: " << passed << "/" << total << " passed\n";
     if (passed == total)

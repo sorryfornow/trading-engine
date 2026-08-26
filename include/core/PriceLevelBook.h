@@ -69,6 +69,17 @@ public:
         return (MIN_PRICE + index * TICK) / static_cast<double>(MULTIPLIER);
     }
 
+    // Fill::tick is the canonical form; use this only for display.
+    static double price_of(int tick) {
+        return tick / static_cast<double>(MULTIPLIER);
+    }
+
+    // Which symbol this book serves. MultiBookEngine stamps it at create_book()
+    // so every Fill carries it without the callback needing extra context.
+    // Left at 0 when a book is used standalone (bench, single-symbol tests).
+    void     set_symbol_id(uint16_t id) { symbol_id_ = id; }
+    uint16_t symbol_id() const          { return symbol_id_; }
+
     // Add a resting order. Returns false and leaves the book untouched if the
     // order cannot be accepted.
     //
@@ -78,6 +89,12 @@ public:
     // resting POOL_SIZE orders.
     bool add(const Order& o) {
         if (o.tick < MIN_PRICE || o.tick > MAX_PRICE) return false;
+
+        // The price must sit on the tick grid. to_index() divides, so an
+        // off-grid tick would be truncated onto a neighbouring level and the
+        // order would silently rest at a price the client never asked for —
+        // worse than a reject, because nobody is told.
+        if ((o.tick - MIN_PRICE) % TICK != 0) return false;
 
         int index = to_index(o.tick);
         if (index < 0 || index >= LEVELS) return false;   // unreachable, kept as a guard
@@ -128,9 +145,12 @@ public:
         }
     }
 
-    using TradeCallback = void(*)(int qty, double price);
+    // Reports one Fill per execution. ctx is passed straight back to the
+    // callback untouched — a plain function pointer cannot capture, and the
+    // response path needs to carry the destination of the report through here.
+    using TradeCallback = void(*)(void* ctx, const Fill& fill);
 
-    void match(TradeCallback on_trade = nullptr) {
+    void match(TradeCallback on_trade = nullptr, void* ctx = nullptr) {
         while (best_bid_idx != -1 && best_ask_idx != -1) {
             if (best_bid_idx < best_ask_idx) break;
 
@@ -140,22 +160,37 @@ public:
             Order* bid = bid_orders.front();
             Order* ask = ask_orders.front();
 
-            int traded_qty = std::min(bid->qty, ask->qty);
+            const int traded_qty = std::min(bid->qty, ask->qty);
 
-            if (on_trade)
-                on_trade(traded_qty, to_price(best_ask_idx));
+            // Read the IDs while the orders are still alive. A fully filled
+            // order is released back to the pool below, after which its
+            // storage may be handed to the next add().
+            const uint32_t bid_id = bid->id;
+            const uint32_t ask_id = ask->id;
 
             bid->qty -= traded_qty;
             ask->qty -= traded_qty;
 
-            if (bid->qty == 0) {
+            const bool bid_done = (bid->qty == 0);
+            const bool ask_done = (ask->qty == 0);
+
+            // Reported after the decrement so the *_filled flags are known,
+            // and before the release so the callback sees a consistent book.
+            if (on_trade) {
+                const Fill f{ bid_id, ask_id,
+                              MIN_PRICE + best_ask_idx * TICK,
+                              traded_qty, symbol_id_, bid_done, ask_done };
+                on_trade(ctx, f);
+            }
+
+            if (bid_done) {
                 bid_orders.remove(bid);
-                id_map.erase(bid->id);
+                id_map.erase(bid_id);
                 pool.release(bid);
             }
-            if (ask->qty == 0) {
+            if (ask_done) {
                 ask_orders.remove(ask);
-                id_map.erase(ask->id);
+                id_map.erase(ask_id);
                 pool.release(ask);
             }
 
@@ -232,4 +267,5 @@ private:
     std::unordered_map<uint32_t, Order*> id_map;
     int best_bid_idx = -1;
     int best_ask_idx = -1;
+    uint16_t symbol_id_ = 0;
 };

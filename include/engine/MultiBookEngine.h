@@ -37,6 +37,9 @@ public:
         if (symbol_id >= MAX_SYMBOLS) return false;
         if (books_[symbol_id] != nullptr) return false;
         books_[symbol_id] = new Book();
+        // Stamped once here so every Fill the book emits identifies its
+        // symbol without the callback needing to track which book it came from.
+        books_[symbol_id]->set_symbol_id(symbol_id);
         return true;
     }
 
@@ -60,12 +63,15 @@ public:
     // INVALID_ID (65535), which is far outside a MAX_SYMBOLS-slot array —
     // indexing it unchecked is an out-of-bounds read reachable from the wire.
     bool add_and_match(uint16_t symbol_id, const Order& o,
-                       typename Book::TradeCallback cb = nullptr) {
+                       typename Book::TradeCallback cb = nullptr,
+                       void* ctx = nullptr) {
         if (symbol_id >= MAX_SYMBOLS) return false;
         Book* b = books_[symbol_id];
         if (!b) return false;
-        if (!b->add(o)) return false;      // price out of range / pool exhausted
-        b->match(cb);
+        // Rejected for price out of range, off the tick grid, or an exhausted
+        // pool. match() is deliberately not run: nothing changed.
+        if (!b->add(o)) return false;
+        b->match(cb, ctx);
         return true;
     }
 
@@ -84,10 +90,11 @@ public:
     // Returns false if the message was rejected (unknown symbol, price out of
     // range, pool exhausted, or unparseable MsgType).
     bool process(const FIXMessage& msg,
-                 typename Book::TradeCallback cb = nullptr) {
+                 typename Book::TradeCallback cb = nullptr,
+                 void* ctx = nullptr) {
         if (msg.type == FIXMessage::NewOrder) {
             Order order(msg.id, msg.side, msg.tick, msg.qty);
-            return add_and_match(msg.symbol_id, order, cb);
+            return add_and_match(msg.symbol_id, order, cb, ctx);
         }
         if (msg.type == FIXMessage::Cancel) {
             return cancel(msg.symbol_id, msg.orig_id);  // orig_id = tag 41
