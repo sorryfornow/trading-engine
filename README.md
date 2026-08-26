@@ -6,7 +6,7 @@ A low-latency order matching engine written in C++17, built from scratch as a le
 
 ```
   Client A ──TCP──┐
-  Client B ──TCP──┤── TCPGateway Thread ── SPSCQueue<FIXMessage> ── Engine Thread
+  Client B ──TCP──┤── TCPGateway Thread ── SPSCQueue<Inbound> ──── Engine Thread
   Client C ──TCP──┘   (epoll/kqueue)                                     │
                       (FIX parse)                                        ▼
                                                               MultiBookEngine
@@ -40,19 +40,24 @@ trading-engine/
 │   │   ├── Poller.h            Cross-platform epoll (Linux) / kqueue (macOS)
 │   │   ├── Connection.h        Per-fd read buffer, TCP framing (fragmentation/coalescing)
 │   │   ├── TCPGateway.h        Non-blocking TCP server, accept/read/parse/push
-│   │   └── SPSCQueue.h         Lock-free SPSC ring buffer (acquire/release)
+│   │   ├── SPSCQueue.h         Lock-free SPSC ring buffer (acquire/release)
+│   │   └── Inbound.h           Queue envelope: message + fd + conn_id for reply routing
 │   ├── engine/         ← Engine layer
-│   │   └── MultiBookEngine.h   Multi-symbol dispatcher, routes by symbol_id
+│   │   ├── MultiBookEngine.h   Multi-symbol dispatcher, routes by symbol_id
+│   │   └── MatchingEngine.h    Deprecated Phase 1 wrapper — unreferenced, see Known Limitations
 │   └── util/
 │       └── Timer.h             Cross-platform nanosecond timer (rdtsc / cntvct)
 ├── src/
 │   ├── server.cpp      TCP server entry point (gateway + engine threads)
 │   └── engine.cpp      Phase 3 dual-thread benchmark demo
 ├── test/
-│   ├── test_main.cpp   Phase 1 OrderBook tests (10)
-│   ├── test_spsc.cpp   SPSC queue tests (6)
-│   ├── test_fix.cpp    FIX parser tests (15)
-│   └── test_multibook.cpp  Multi-symbol engine tests (6)
+│   ├── test_main.cpp       Phase 1 OrderBook tests (10)
+│   ├── test_spsc.cpp       SPSC queue tests (6)
+│   ├── test_fix.cpp        FIX parser tests (15)
+│   ├── test_multibook.cpp  Multi-symbol engine tests (10)
+│   ├── test_connection.cpp Framing buffer tests (10)
+│   ├── test_poller.cpp     Poller tests over socketpair (9)
+│   └── test_gateway.cpp    Gateway integration tests over loopback TCP (13)
 ├── bench/
 │   └── bench.cpp       Latency benchmark (OrderBook vs PriceLevelBook)
 ├── CMakeLists.txt
@@ -73,7 +78,9 @@ trading-engine/
 
 **Integer ticks** — Prices are converted to integer ticks (`100.50` → tick `1005`) to avoid floating-point comparison issues and enable direct array indexing.
 
-**TradeCallback** — `match()` takes an optional function pointer instead of writing to `std::cout`. Bench runs with `nullptr` (zero overhead); tests pass a lambda for output.
+**TradeCallback** — `match()` reports each execution as a `Fill` through an optional function pointer, plus an opaque `void* ctx` the caller gets back untouched (a plain function pointer cannot capture). `Fill` names both order IDs, the execution tick, the symbol, and whether each side was fully filled — everything an ExecutionReport needs for OrdStatus. The two sides are named bid/ask rather than aggressor/resting because only the caller knows which ID it just submitted. Bench runs with `nullptr` for zero overhead.
+
+**Routing identity** — Queue elements are an `Inbound` envelope: the parsed message plus the originating `fd` and a monotonic `conn_id`. `fd` alone is not an identity — the kernel reissues the lowest free descriptor, so consecutive clients routinely land on the same number (`test_gateway` Test 12 reports this happening every run). `fd` is the O(1) lookup key; `conn_id` is the generation check that stops a reply reaching a client that has since disconnected.
 
 **Lock-free SPSCQueue** — A single-producer single-consumer ring buffer using `std::atomic` with `acquire`/`release` memory ordering. `head_` and `tail_` are on separate cache lines (`alignas(64)`) to prevent false sharing between threads.
 
@@ -99,9 +106,9 @@ trading-engine/
 
 | Version | p50 | p99 | p99.9 |
 |---------|-----|-----|-------|
-| `std::map` (baseline) | 125 ns | 9083 ns | 21833 ns |
-| Array + LinkedList + Pool | **41 ns** | **250 ns** | **1291 ns** |
-| **Improvement** | **3x** | **36x** | **17x** |
+| `std::map` (baseline) | 83 ns | 9125 ns | 23833 ns |
+| Array + LinkedList + Pool | **41 ns** | **166 ns** | **~850 ns** |
+| **Improvement** | **2x** | **55x** | **28x** |
 
 > ARM64 timer resolution is ~41.67 ns. Sub-tick variations are quantized. x86 `rdtsc` provides true nanosecond precision.
 
@@ -113,8 +120,13 @@ trading-engine/
 
 | Platform | p50 | p99 | p99.9 |
 |----------|-----|-----|-------|
-| Apple M (ARM64) | 41 ns | 250 ns | 458 ns |
+| Apple M (ARM64) | 41–83 ns | 208–291 ns | 375–1083 ns |
 
+> Ranges are the spread over three consecutive runs. The dual-thread path is
+> noticeably less repeatable than the single-book benchmark above, which returns
+> the same p99 every run — the queue hand-off and thread scheduling add jitter
+> that the isolated book does not see.
+>
 > AMD x86_64 results pending.
 
 ### Optimization Timeline
@@ -125,7 +137,7 @@ trading-engine/
 | + Array index | Replace map with fixed array | ~4000 ns |
 | + ObjectPool | Zero-malloc order allocation | ~833 ns |
 | + Intrusive list | O(1) remove, no memmove | ~333 ns |
-| + id index + align | O(1) cancel, cache line align | **~250 ns** |
+| + id index + align | O(1) cancel, cache line align | **~166 ns** |
 
 ## Build & Run
 
@@ -188,7 +200,7 @@ Check the startup banner to confirm which mode the server is in.
 
 ## Tests
 
-69 test cases across 7 suites:
+73 test cases across 7 suites:
 
 ### OrderBook Tests (`test_main`) — Phase 1
 
@@ -248,6 +260,8 @@ Check the startup banner to confirm which mode the server is in.
 | 6 | Drop Unknown Symbol | `INVALID_ID` (65535) rejected without indexing `books_` |
 | 7 | Reject Out-of-Range Price | Ticks past either end of the book rejected, book unchanged |
 | 8 | Reject On Pool Exhaustion | Full `ObjectPool` rejects; freeing a slot restores capacity |
+| 9 | Reject Off-Grid Price | Tick 992 with `TICK=5` is refused, not snapped onto the 990 level |
+| 10 | Fill Reporting | `Fill` contents across partial fills and a two-level sweep, including per-side filled flags and symbol attribution |
 
 ### Connection Tests (`test_connection`) — Phase 4
 
@@ -303,6 +317,8 @@ has been stopped and joined, so nothing reads gateway state concurrently.
 | 9 | Queue Full Drops, Gateway Survives | Overflow is shed rather than blocking the read loop |
 | 10 | Pipe Delimiter Mode | The `--pipe` test switch, end to end |
 | 11 | Stop Terminates The Event Loop | `stop()` is observed within the poll timeout |
+| 12 | conn_id Distinguishes Recycled Fds | Two sequential clients get distinct, increasing `conn_id`s — and the test reports that the fd was reused, which it is on every run |
+| 13 | conn_id Is Stable Within A Connection | Every message from one client carries the same `conn_id` and `fd` |
 
 ## Known Limitations
 
@@ -313,8 +329,8 @@ reading the code.
 
 | Area | Gap |
 |------|-----|
-| **ExecutionReport** | `Connection` has no write buffer and `TCPGateway` never calls `write()`. `Poller` supports `POLLOUT` but nothing subscribes to it. A client can submit orders and receives nothing back — no fill, no ack, no reject. |
-| **TradeCallback signature** | `void(*)(int qty, double price)` carries no context pointer and does not report the resting/aggressing order IDs, so a fill cannot be attributed to a ClOrdID or routed back to an fd. |
+| **ExecutionReport** | `Connection` has no write buffer and `TCPGateway` never calls `write()`. `Poller` supports `POLLOUT` and `test_poller` Test 5 covers it, but nothing subscribes. A client can submit orders and receives nothing back — no fill, no ack, no reject. |
+| **No reverse queue** | Fills are reported to a callback that currently receives `nullptr`. There is no engine→gateway queue to carry them, and no `Outbound` counterpart to `Inbound`. |
 | **Rejects are invisible** | `MultiBookEngine::process()` returns false for a rejected order, but with no response path the server can only count them. `server` prints the tally at shutdown. |
 
 ### Missing — the session layer
@@ -330,7 +346,8 @@ reading the code.
 | Area | Gap |
 |------|-----|
 | **Delimiter mismatch** | Fails late and indirectly. Under 4 KB nothing happens at all: no message processed, no error. Past 4 KB the gateway disconnects the client with a diagnostic naming the expected delimiter. There is no handshake that detects this at connect time. |
-| **Tick alignment** | `to_index()` truncates. With `TICK=5`, an order at tick 992 silently lands on the 990 level rather than being rejected. Prices off the grid are accepted and quietly moved. |
+| **Duplicate ClOrdID orphans an order** | `PriceLevelBook::add()` does `id_map[o.id] = p` with no collision check, and order IDs are global to a book. FIX ClOrdID is unique *per session*, not globally — every client numbers its own orders from 1. When two clients rest the same ID on one symbol, the second overwrites the first's index entry: the first order stays in the book, becomes permanently uncancellable, and its pool slot is never released. Reproduced; not yet fixed. The `conn_id` now carried in `Inbound` is what a composite `(conn_id, ClOrdID)` key would need. |
+| **`MatchingEngine` is dead code** | Referenced by nothing. Its comment points at `src/main.cpp`, which no longer exists. It also takes `OrderBook` by value, copying a `std::map`. |
 | **Backpressure** | A full SPSC queue drops the message and logs. No flow control, and the client is never told. |
 | **Symbol lookup** | `SymbolRegistry::lookup()` is a linear scan. Fine at 256 symbols, not at exchange scale. |
 | **`volatile bool running_`** | `TCPGateway` uses `volatile` for cross-thread stop signalling. It works here but is not a synchronisation primitive; it should be `std::atomic<bool>`. |
@@ -347,14 +364,16 @@ reading the code.
 
 ### Fixed
 
-Three input-validation defects were reachable from the wire and are now closed,
-each covered by a test:
+Five defects found by review and closed, each covered by a test. The first
+three were reachable from the wire:
 
 | Was | Now |
 |-----|-----|
 | An order priced outside the book's range tripped `assert` in `PriceLevelBook::add()` and aborted the process (exit 134). `CMakeLists.txt` overrides `CMAKE_CXX_FLAGS_RELEASE` without `-DNDEBUG`, so asserts are live in Release — one FIX message killed the server. | `add()` returns `bool` and rejects. Test 7. |
 | An unresolved Symbol left `symbol_id` at `INVALID_ID` (65535), which `add_and_match()` used to index a 256-slot array — an out-of-bounds read, SEGV under ASan. | `symbol_id` is bounds-checked before indexing. Test 6. |
 | `ObjectPool::allocate()` asserted on exhaustion, reachable by resting `POOL_SIZE` orders. | Returns `nullptr`; `add()` rejects. Test 8. |
+| `to_index()` truncates, so with `TICK=5` an order at tick 992 silently rested on the 990 level — a price the client never sent, with no reject. | Off-grid ticks are refused. `test_multibook` Test 9. |
+| `TradeCallback` was `void(*)(int qty, double price)`: no order IDs to attribute a fill to, no context pointer to route it, no symbol. An ExecutionReport could not be built from it. | Reports a `Fill` with both IDs, tick, symbol, and per-side filled flags. `test_multibook` Test 10. |
 
 ## Roadmap
 
@@ -363,6 +382,11 @@ each covered by a test:
 - [x] **Phase 3** — SPSCQueue (lock-free), FIX parser, dual-thread architecture, p99 = 250 ns
 - [x] **Phase 4** — FIX 4.2 protocol (BodyLength/CheckSum/framing), SymbolRegistry, MultiBookEngine, TCP Gateway (epoll/kqueue), multi-symbol support
 - [ ] **Phase 5** — Response path: ExecutionReport (35=8) over an engine→gateway return queue, write buffering driven by `POLLOUT`, pre-trade risk checks with explicit Reject (35=3)
+      - [x] `Fill` reporting with order IDs, symbol, and per-side filled flags
+      - [x] `Inbound` envelope carrying `fd` + monotonic `conn_id` for reply routing
+      - [ ] `build_exec_report()` (35=8) and `build_reject()` (35=3)
+      - [ ] engine→gateway return queue
+      - [ ] `Connection` write buffer driven by `POLLOUT`
 - [ ] **Phase 6** — FIX session layer: Logon/Logout handshake, heartbeat timers, MsgSeqNum validation, gap detection and ResendRequest
 - [ ] **Phase 7** — Operability: write-ahead journaling and crash recovery, tick-to-trade latency histograms, external configuration
 - [ ] **Phase 8** — Scale-out: L2 market data dissemination, symbol-sharded engine threads, CPU pinning, huge pages, NUMA awareness
