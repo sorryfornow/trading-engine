@@ -14,11 +14,12 @@
 #include "transport/Poller.h"
 #include "transport/Connection.h"
 #include "transport/SPSCQueue.h"
+#include "transport/Inbound.h"
 #include "protocol/SymbolRegistry.h"
 
 // ─── TCP Gateway ─────────────────────────────────────────────────────────────
 // Runs on its own thread. Accepts TCP connections, reads FIX messages,
-// parses them, and pushes FIXMessage into an SPSC queue for the engine
+// parses them, and pushes Inbound records into an SPSC queue for the engine
 // thread to consume.
 //
 // Non-blocking I/O via epoll/kqueue. One thread handles all connections.
@@ -33,7 +34,7 @@ template<std::size_t QUEUE_SIZE = 8192>
 class TCPGateway {
 public:
     TCPGateway(uint16_t port,
-               SPSCQueue<FIXMessage, QUEUE_SIZE>& queue,
+               SPSCQueue<Inbound, QUEUE_SIZE>& queue,
                const SymbolRegistry& registry,
                bool validate_fix = true,
                char delim = FIXParser::SOH)
@@ -104,7 +105,7 @@ public:
 
 private:
     uint16_t port_;
-    SPSCQueue<FIXMessage, QUEUE_SIZE>& queue_;
+    SPSCQueue<Inbound, QUEUE_SIZE>& queue_;
     const SymbolRegistry& registry_;
     bool validate_;
     char delim_;
@@ -116,6 +117,7 @@ private:
     volatile bool running_ = false;
     uint64_t msg_count_ = 0;
     uint64_t conn_count_ = 0;
+    uint32_t next_conn_id_ = 0;   // pre-incremented, so live ids start at 1
 
     // ─── Socket setup ────────────────────────────────────────────────────
 
@@ -178,8 +180,11 @@ private:
         // Register with poller
         poller_.add(client_fd, POLLIN);
 
-        // Create connection state
-        connections_.emplace(client_fd, Connection(client_fd, delim_));
+        // Create connection state. conn_id is handed out from a counter that
+        // only ever goes up, so a reply arriving after this client is gone can
+        // be recognised as stale even if its fd has already been reissued.
+        const uint32_t conn_id = ++next_conn_id_;
+        connections_.emplace(client_fd, Connection(client_fd, delim_, conn_id));
         conn_count_++;
 
         char ip[INET_ADDRSTRLEN];
@@ -227,9 +232,14 @@ private:
         FIXMessage msg;
         while (conn.try_extract(msg, &registry_, validate_)) {
             if (msg.type != FIXMessage::Unknown) {
+                // Stamped with where it came from so the engine's reply can be
+                // routed back — and so a reply for a client that has since
+                // disconnected can be discarded rather than misdelivered.
+                const Inbound in{msg, fd, conn.conn_id};
+
                 // Push to engine queue. If queue is full, drop the message.
                 // In production, you'd want backpressure or a larger queue.
-                if (!queue_.push(msg)) {
+                if (!queue_.push(in)) {
                     std::fprintf(stderr, "[Gateway] Queue full, dropping message id=%u\n", msg.id);
                 }
                 msg_count_++;

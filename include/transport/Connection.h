@@ -26,21 +26,27 @@ public:
     std::size_t used = 0;       // how many bytes are in buf
     char delim = FIXParser::SOH;  // FIX field delimiter; '|' only for testing
 
+    // Monotonic, never reused. fd numbers are recycled the moment a client
+    // disconnects, so this is what actually identifies a connection across the
+    // round trip through the engine. 0 means "not a real connection".
+    uint32_t conn_id = 0;
+
     Connection() : fd(-1), used(0) {
         buf[0] = '\0';
     }
 
-    explicit Connection(int fd_, char delim_ = FIXParser::SOH)
-        : fd(fd_), used(0), delim(delim_) {
+    explicit Connection(int fd_, char delim_ = FIXParser::SOH, uint32_t conn_id_ = 0)
+        : fd(fd_), used(0), delim(delim_), conn_id(conn_id_) {
         buf[0] = '\0';
     }
 
     // Explicit move (unordered_map node construction needs this)
     Connection(Connection&& other) noexcept
-        : fd(other.fd), used(other.used), delim(other.delim) {
+        : fd(other.fd), used(other.used), delim(other.delim), conn_id(other.conn_id) {
         std::memcpy(buf, other.buf, used);
         other.fd = -1;
         other.used = 0;
+        other.conn_id = 0;
     }
 
     Connection& operator=(Connection&& other) noexcept {
@@ -48,9 +54,11 @@ public:
             fd = other.fd;
             used = other.used;
             delim = other.delim;
+            conn_id = other.conn_id;
             std::memcpy(buf, other.buf, used);
             other.fd = -1;
             other.used = 0;
+            other.conn_id = 0;
         }
         return *this;
     }
@@ -96,5 +104,6 @@ public:
     void reset() {
         fd = -1;
         used = 0;
+        conn_id = 0;
     }
 };

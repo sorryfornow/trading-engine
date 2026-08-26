@@ -7,6 +7,7 @@
 #include "transport/TCPGateway.h"
 #include "engine/MultiBookEngine.h"
 #include "transport/SPSCQueue.h"
+#include "transport/Inbound.h"
 #include "protocol/SymbolRegistry.h"
 #include "protocol/FIXParser.h"
 #include "core/PriceLevelBook.h"
@@ -27,30 +28,33 @@ static void signal_handler(int) {
 }
 
 // ─── Engine thread ───────────────────────────────────────────────────────────
-// Pops FIXMessages from the SPSC queue and routes them through MultiBookEngine.
-static void engine_thread_func(SPSCQueue<FIXMessage, QUEUE_SIZE>& queue,
+// Pops Inbound records from the SPSC queue and routes them through
+// MultiBookEngine.
+static void engine_thread_func(SPSCQueue<Inbound, QUEUE_SIZE>& queue,
                                 MultiBookEngine<Book>& engine) {
     std::fprintf(stderr, "[Engine] Thread started.\n");
 
     uint64_t accepted = 0;
     uint64_t rejected = 0;
-    FIXMessage msg;
+    Inbound in;
 
     // process() returns false for unknown symbol, price outside the book's
     // range, or an exhausted order pool. Until the response path exists there
     // is no ExecutionReport to send, so rejects are counted here rather than
     // reported to the client.
     while (g_running.load(std::memory_order_relaxed)) {
-        if (queue.pop(msg)) {
-            engine.process(msg, nullptr) ? ++accepted : ++rejected;
+        if (queue.pop(in)) {
+            // in.fd / in.conn_id say where a reply would go. Nothing consumes
+            // them yet — the response path is Phase 5.
+            engine.process(in.msg, nullptr) ? ++accepted : ++rejected;
         }
         // No sleep — busy poll for lowest latency.
         // In production, could use a conditional variable or yield strategy.
     }
 
     // Drain remaining messages after stop signal
-    while (queue.pop(msg)) {
-        engine.process(msg, nullptr) ? ++accepted : ++rejected;
+    while (queue.pop(in)) {
+        engine.process(in.msg, nullptr) ? ++accepted : ++rejected;
     }
 
     std::fprintf(stderr, "[Engine] Thread stopped. Accepted %llu, rejected %llu.\n",
@@ -104,7 +108,7 @@ int main(int argc, char** argv) {
     }
 
     // ── 3. SPSC queue (gateway → engine) ────────────────────────────────
-    SPSCQueue<FIXMessage, QUEUE_SIZE> queue;
+    SPSCQueue<Inbound, QUEUE_SIZE> queue;
 
     // ── 4. Start engine thread ──────────────────────────────────────────
     std::thread engine_thread(engine_thread_func,

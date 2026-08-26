@@ -1,5 +1,6 @@
 #include "transport/TCPGateway.h"
 #include "transport/SPSCQueue.h"
+#include "transport/Inbound.h"
 #include "protocol/SymbolRegistry.h"
 #include "protocol/FIXParser.h"
 #include <cassert>
@@ -91,7 +92,7 @@ static std::string make_order(uint32_t id, const char* symbol, int tick,
 // every test calls before asserting.
 template<std::size_t QSIZE>
 struct Fixture {
-    SPSCQueue<FIXMessage, QSIZE> queue;
+    SPSCQueue<Inbound, QSIZE> queue;
     SymbolRegistry               registry;
     uint16_t                     port;
     TCPGateway<QSIZE>            gw;
@@ -118,10 +119,10 @@ struct Fixture {
 
     // Wait until the queue holds at least n messages, draining as we go.
     // Returns everything drained.
-    std::vector<FIXMessage> drain(std::size_t n, std::chrono::milliseconds cap = 2000ms) {
-        std::vector<FIXMessage> got;
+    std::vector<Inbound> drain(std::size_t n, std::chrono::milliseconds cap = 2000ms) {
+        std::vector<Inbound> got;
         auto deadline = std::chrono::steady_clock::now() + cap;
-        FIXMessage m;
+        Inbound m;
         while (got.size() < n && std::chrono::steady_clock::now() < deadline) {
             if (queue.pop(m)) got.push_back(m);
             else std::this_thread::sleep_for(2ms);
@@ -130,10 +131,10 @@ struct Fixture {
     }
 
     // Drain whatever is there after giving the gateway time to act.
-    std::vector<FIXMessage> drain_all(std::chrono::milliseconds settle = 250ms) {
+    std::vector<Inbound> drain_all(std::chrono::milliseconds settle = 250ms) {
         std::this_thread::sleep_for(settle);
-        std::vector<FIXMessage> got;
-        FIXMessage m;
+        std::vector<Inbound> got;
+        Inbound m;
         while (queue.pop(m)) got.push_back(m);
         return got;
     }
@@ -157,11 +158,11 @@ int main() {
         f.stop();
 
         assert(got.size() == 1);
-        assert(got[0].type == FIXMessage::NewOrder);
-        assert(got[0].id == 1001);
-        assert(got[0].symbol_id == 0);
-        assert(got[0].tick == 1005);
-        assert(got[0].qty == 200);
+        assert(got[0].msg.type == FIXMessage::NewOrder);
+        assert(got[0].msg.id == 1001);
+        assert(got[0].msg.symbol_id == 0);
+        assert(got[0].msg.tick == 1005);
+        assert(got[0].msg.qty == 200);
         assert(f.gw.connections_total() == 1);
         assert(f.gw.messages_received() == 1);
         std::cout << "PASSED\n";
@@ -189,8 +190,8 @@ int main() {
         f.stop();
 
         assert(got.size() == 1);
-        assert(got[0].id == 1002);
-        assert(got[0].symbol_id == 1);
+        assert(got[0].msg.id == 1002);
+        assert(got[0].msg.symbol_id == 1);
         std::cout << "PASSED\n";
         passed++;
     }
@@ -212,7 +213,7 @@ int main() {
         f.stop();
 
         assert(got.size() == 3);
-        assert(got[0].id == 2001 && got[1].id == 2002 && got[2].id == 2003);
+        assert(got[0].msg.id == 2001 && got[1].msg.id == 2002 && got[2].msg.id == 2003);
         assert(f.gw.messages_received() == 3);
         std::cout << "PASSED\n";
         passed++;
@@ -245,8 +246,8 @@ int main() {
         assert(got.size() == 2);
         bool saw1 = false, saw2 = false;
         for (const auto& m : got) {
-            if (m.id == 3001) { saw1 = true; assert(m.symbol_id == 0); }
-            if (m.id == 3002) { saw2 = true; assert(m.symbol_id == 1); }
+            if (m.msg.id == 3001) { saw1 = true; assert(m.msg.symbol_id == 0); }
+            if (m.msg.id == 3002) { saw2 = true; assert(m.msg.symbol_id == 1); }
         }
         assert(saw1 && saw2);
         assert(f.gw.connections_total() == 2);
@@ -279,7 +280,7 @@ int main() {
         f.stop();
 
         assert(got.size() == 1);
-        assert(got[0].id == 4002);
+        assert(got[0].msg.id == 4002);
         assert(f.gw.connections_total() == 2);
         assert(f.gw.connections_active() == 0);    // both cleaned up
         std::cout << "PASSED\n";
@@ -305,7 +306,7 @@ int main() {
         close(c2);
         f.stop();
 
-        assert(got.size() == 1 && got[0].id == 5001);
+        assert(got.size() == 1 && got[0].msg.id == 5001);
         assert(f.gw.connections_active() == 0);
         std::cout << "PASSED\n";
         passed++;
@@ -334,7 +335,7 @@ int main() {
         f.stop();
 
         assert(got.size() == 1);
-        assert(got[0].id == 6002);                 // only the valid one
+        assert(got[0].msg.id == 6002);                 // only the valid one
         assert(f.gw.messages_received() == 1);
         std::cout << "PASSED\n";
         passed++;
@@ -372,7 +373,7 @@ int main() {
         close(c);
         f.stop();
 
-        assert(got.size() == 1 && got[0].id == 7001);
+        assert(got.size() == 1 && got[0].msg.id == 7001);
         assert(f.gw.messages_received() == 1);     // the junk yielded nothing
         std::cout << "PASSED\n";
         passed++;
@@ -403,7 +404,7 @@ int main() {
         close(c);
         f.stop();
 
-        FIXMessage m;
+        Inbound m;
         int drained = 0;
         while (f.queue.pop(m)) drained++;
         assert(drained == 3);                      // capacity 4, one slot lost
@@ -429,8 +430,8 @@ int main() {
         f.stop();
 
         assert(got.size() == 1);
-        assert(got[0].id == 9001);
-        assert(got[0].symbol_id == 0);
+        assert(got[0].msg.id == 9001);
+        assert(got[0].msg.symbol_id == 0);
         std::cout << "PASSED\n";
         passed++;
     }
@@ -454,7 +455,78 @@ int main() {
         passed++;
     }
 
-    constexpr int total = 11;
+    // ── Test 12: routing identity survives fd reuse ──────────────────────
+    section("Test 12: conn_id Distinguishes Recycled Fds");
+    {
+        // The reason Inbound carries conn_id and not just fd. The kernel hands
+        // out the lowest free descriptor, so a client that connects after
+        // another disconnects usually lands on the same fd. If a reply were
+        // routed by fd alone, a fill for the first client could be delivered
+        // to the second.
+        Fixture<64> f;
+
+        int c1 = connect_to(f.port);
+        assert(c1 >= 0);
+        const std::string m1 = make_order(1, "AAPL", 1000, 10);
+        send_all(c1, m1.data(), m1.size());
+        auto first = f.drain(1);
+        assert(first.size() == 1);
+        close(c1);
+        std::this_thread::sleep_for(150ms);   // let the gateway reap it
+
+        int c2 = connect_to(f.port);
+        assert(c2 >= 0);
+        const std::string m2 = make_order(2, "MSFT", 1005, 20);
+        send_all(c2, m2.data(), m2.size());
+        auto second = f.drain(1);
+        assert(second.size() == 1);
+        close(c2);
+        f.stop();
+
+        // Two different clients, and the fd was almost certainly reused.
+        assert(first[0].msg.id == 1 && second[0].msg.id == 2);
+        assert(first[0].conn_id != second[0].conn_id);
+        assert(first[0].conn_id != 0 && second[0].conn_id != 0);
+        assert(second[0].conn_id > first[0].conn_id);   // monotonic
+
+        // Both records point at a real fd, and the whole point is that this
+        // may well be the *same* number for two unrelated connections.
+        assert(first[0].fd > 0 && second[0].fd > 0);
+        std::cout << "PASSED";
+        if (first[0].fd == second[0].fd)
+            std::cout << "  (fd " << first[0].fd << " was reused, as expected)";
+        std::cout << "\n";
+        passed++;
+    }
+
+    // ── Test 13: every message from one connection shares its conn_id ────
+    section("Test 13: conn_id Is Stable Within A Connection");
+    {
+        Fixture<64> f;
+        int c = connect_to(f.port);
+        assert(c >= 0);
+
+        const std::string all = make_order(11, "AAPL", 1000, 10)
+                              + make_order(12, "AAPL", 1005, 20)
+                              + make_order(13, "MSFT", 1010, 30);
+        send_all(c, all.data(), all.size());
+
+        auto got = f.drain(3);
+        close(c);
+        f.stop();
+
+        assert(got.size() == 3);
+        const uint32_t id = got[0].conn_id;
+        assert(id != 0);
+        for (const auto& in : got) {
+            assert(in.conn_id == id);
+            assert(in.fd == got[0].fd);
+        }
+        std::cout << "PASSED\n";
+        passed++;
+    }
+
+    constexpr int total = 13;
 
     std::cout << "\n======================================\n";
     std::cout << "  Gateway Results: " << passed << "/" << total << " passed\n";
